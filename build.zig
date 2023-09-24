@@ -503,7 +503,7 @@ pub const InitializeDiskStep = struct {
 
         ids.disk_file.path = try b.cache_root.join(b.allocator, &output_components);
 
-        if (step.result_cached and false) // TODO: Reenable this
+        if (step.result_cached)
             return;
 
         {
@@ -520,8 +520,8 @@ pub const InitializeDiskStep = struct {
             try writeDiskImage(b, step, disk, 0, ids.size, ids.content, &context);
         }
 
-        if (!step.result_cached)
-            try step.writeManifest(&man);
+        // if (!step.result_cached)
+        try step.writeManifest(&man);
     }
 };
 
