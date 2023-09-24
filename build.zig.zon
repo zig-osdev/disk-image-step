@@ -1,0 +1,10 @@
+.{
+    .name = "disk-image-step",
+    .version = "0.1.0",
+    .dependencies = .{
+        .zfat = .{
+            .url = "https://github.com/ZigEmbeddedGroup/zfat/archive/c97bcca86b4e878023df070c9e0264a21c056622.tar.gz",
+            .hash = "1220a1f050f3a67785cbe68283b252f02f72885eea80d6a9e1856b02cd66deaf1492",
+        },
+    },
+}

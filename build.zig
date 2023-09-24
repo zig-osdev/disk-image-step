@@ -4,9 +4,7 @@ pub const KiB = 1024;
 pub const MiB = 1024 * KiB;
 pub const GiB = 1024 * MiB;
 
-pub fn build(b: *std.Build) void {
-    const debug_step = b.step("debug", "Builds a basic exemplary disk image.");
-
+fn usageDemo(b: *std.Build, debug_step: *std.Build.Step) void {
     installDebugDisk(debug_step, "uninitialized.img", 50 * MiB, .uninitialized);
 
     installDebugDisk(debug_step, "empty-mbr.img", 50 * MiB, .{
@@ -42,27 +40,27 @@ pub fn build(b: *std.Build) void {
         },
     });
 
-    // installDebugDisk(debug_step, "empty-fat32.img", 50 * MiB, .{
-    //     .fs = .{
-    //         .format = .fat32,
-    //         .label = "EMPTY",
-    //         .items = &.{},
-    //     },
-    // });
+    installDebugDisk(debug_step, "empty-fat32.img", 50 * MiB, .{
+        .fs = .{
+            .format = .fat32,
+            .label = "EMPTY",
+            .items = &.{},
+        },
+    });
 
-    // installDebugDisk(debug_step, "initialized-fat32.img", 50 * MiB, .{
-    //     .fs = .{
-    //         .format = .fat32,
-    //         .label = "ROOTFS",
-    //         .items = &.{
-    //             .{ .empty_dir = "boot/EFI/refind/icons" },
-    //             .{ .empty_dir = "/boot/EFI/nixos/.extra-files/" },
-    //             .{ .empty_dir = "Users/xq/" },
-    //             .{ .copy_dir = .{ .source = relpath(b, "dummy/Windows"), .destination = "Windows" } },
-    //             .{ .copy_file = .{ .source = relpath(b, "dummy/README.md"), .destination = "Users/xq/README.md" } },
-    //         },
-    //     },
-    // });
+    installDebugDisk(debug_step, "initialized-fat32.img", 50 * MiB, .{
+        .fs = .{
+            .format = .fat32,
+            .label = "ROOTFS",
+            .items = &.{
+                .{ .empty_dir = "boot/EFI/refind/icons" },
+                .{ .empty_dir = "/boot/EFI/nixos/.extra-files/" },
+                .{ .empty_dir = "Users/xq/" },
+                .{ .copy_dir = .{ .source = relpath(b, "dummy/Windows"), .destination = "Windows" } },
+                .{ .copy_file = .{ .source = relpath(b, "dummy/README.md"), .destination = "Users/xq/README.md" } },
+            },
+        },
+    });
 
     // TODO: Implement GPT partition support
     // installDebugDisk(debug_step, "empty-gpt.img", 50 * MiB, .{
@@ -70,6 +68,35 @@ pub fn build(b: *std.Build) void {
     //         .partitions = &.{},
     //     },
     // });
+}
+
+const FatFS = @import("zfat");
+
+const fatfs_config = FatFS.Config{
+    // .max_long_name_len = 121,
+    .code_page = .us,
+    .volumes = .{ .count = 1 },
+    .rtc = .{ .static = .{ .year = 2022, .month = .jul, .day = 10 } },
+    .mkfs = true,
+};
+
+pub fn build(b: *std.Build) void {
+    const debug_step = b.step("debug", "Builds a basic exemplary disk image.");
+
+    usageDemo(b, debug_step);
+
+    const fatfs_module = FatFS.createModule(b, fatfs_config);
+
+    {
+        const mkfs_fat = b.addExecutable(.{
+            .name = "mkfs.fat",
+            .root_source_file = .{ .path = "src/mkfs.fat.zig" },
+        });
+        mkfs_fat.addModule("fat", fatfs_module);
+        mkfs_fat.linkLibC();
+        FatFS.link(mkfs_fat, fatfs_config);
+        b.installArtifact(mkfs_fat);
+    }
 }
 
 fn relpath(b: *std.Build, path: []const u8) std.Build.LazyPath {
