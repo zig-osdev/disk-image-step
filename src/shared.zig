@@ -84,7 +84,7 @@ pub fn App(comptime Context: type) type {
                     .mkdir => {
                         const dir = try normalize(cmd_iter.next() orelse return mistake("mkdir:<dst> is missing it's <dst> path!", .{}));
 
-                        std.log.info("mkdir(\"{}\")", .{std.zig.fmtEscapes(dir)});
+                        // std.log.info("mkdir(\"{}\")", .{std.zig.fmtEscapes(dir)});
 
                         try recursiveMkDir(dir);
                     },
@@ -92,7 +92,7 @@ pub fn App(comptime Context: type) type {
                         const src = cmd_iter.next() orelse return mistake("file:<src>:<dst> is missing it's <src> path!", .{});
                         const dst = try normalize(cmd_iter.next() orelse return mistake("file:<src>:<dst> is missing it's <dst> path!", .{}));
 
-                        std.log.info("file(\"{}\", \"{}\")", .{ std.zig.fmtEscapes(src), std.zig.fmtEscapes(dst) });
+                        // std.log.info("file(\"{}\", \"{}\")", .{ std.zig.fmtEscapes(src), std.zig.fmtEscapes(dst) });
 
                         var file = try std.fs.cwd().openFile(src, .{});
                         defer file.close();
@@ -103,7 +103,7 @@ pub fn App(comptime Context: type) type {
                         const src = cmd_iter.next() orelse return mistake("dir:<src>:<dst> is missing it's <src> path!", .{});
                         const dst = try normalize(cmd_iter.next() orelse return mistake("dir:<src>:<dst> is missing it's <dst> path!", .{}));
 
-                        std.log.info("dir(\"{}\", \"{}\")", .{ std.zig.fmtEscapes(src), std.zig.fmtEscapes(dst) });
+                        // std.log.info("dir(\"{}\", \"{}\")", .{ std.zig.fmtEscapes(src), std.zig.fmtEscapes(dst) });
 
                         var iter_dir = try std.fs.cwd().openIterableDir(src, .{});
                         defer iter_dir.close();
@@ -119,7 +119,7 @@ pub fn App(comptime Context: type) type {
 
                             const fs_path = path_buffer.items;
 
-                            std.log.debug("- {s}", .{path_buffer.items});
+                            // std.log.debug("- {s}", .{path_buffer.items});
 
                             switch (entry.kind) {
                                 .file => {

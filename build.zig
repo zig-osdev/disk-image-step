@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 
 pub const KiB = 1024;
 pub const MiB = 1024 * KiB;
@@ -62,6 +63,34 @@ fn usageDemo(b: *std.Build, debug_step: *std.Build.Step) void {
         },
     });
 
+    installDebugDisk(debug_step, "initialized-fat32-in-mbr-partitions.img", 100 * MiB, .{
+        .mbr = .{
+            .partitions = .{
+                &.{
+                    .size = 90 * MiB,
+                    .bootable = true,
+                    .type = .fat32_lba,
+                    .data = .{
+                        .fs = .{
+                            .format = .fat32,
+                            .label = "ROOTFS",
+                            .items = &.{
+                                .{ .empty_dir = "boot/EFI/refind/icons" },
+                                .{ .empty_dir = "/boot/EFI/nixos/.extra-files/" },
+                                .{ .empty_dir = "Users/xq/" },
+                                .{ .copy_dir = .{ .source = relpath(b, "dummy/Windows"), .destination = "Windows" } },
+                                .{ .copy_file = .{ .source = relpath(b, "dummy/README.md"), .destination = "Users/xq/README.md" } },
+                            },
+                        },
+                    },
+                },
+                null,
+                null,
+                null,
+            },
+        },
+    });
+
     // TODO: Implement GPT partition support
     // installDebugDisk(debug_step, "empty-gpt.img", 50 * MiB, .{
     //     .gpt = .{
@@ -70,32 +99,44 @@ fn usageDemo(b: *std.Build, debug_step: *std.Build.Step) void {
     // });
 }
 
+const MyBuild = @This();
+
 const FatFS = @import("zfat");
 
 const fatfs_config = FatFS.Config{
     // .max_long_name_len = 121,
     .code_page = .us,
     .volumes = .{ .count = 1 },
-    .rtc = .{ .static = .{ .year = 2022, .month = .jul, .day = 10 } },
+    .rtc = .dynamic,
     .mkfs = true,
+    .exfat = true,
 };
 
 pub fn build(b: *std.Build) void {
     const debug_step = b.step("debug", "Builds a basic exemplary disk image.");
 
     usageDemo(b, debug_step);
+}
 
-    const fatfs_module = FatFS.createModule(b, fatfs_config);
+fn resolveFilesystemMaker(b: *std.Build, fs: FileSystem.Format) std.Build.LazyPath {
+    switch (fs) {
+        .fat12, .fat16, .fat32, .exfat => {
+            const fatfs_module = FatFS.createModule(b, fatfs_config);
 
-    {
-        const mkfs_fat = b.addExecutable(.{
-            .name = "mkfs.fat",
-            .root_source_file = .{ .path = "src/mkfs.fat.zig" },
-        });
-        mkfs_fat.addModule("fat", fatfs_module);
-        mkfs_fat.linkLibC();
-        FatFS.link(mkfs_fat, fatfs_config);
-        b.installArtifact(mkfs_fat);
+            const mkfs_fat = b.addExecutable(.{
+                .name = "mkfs.fat",
+                .root_source_file = .{ .path = "src/mkfs.fat.zig" },
+            });
+            mkfs_fat.addModule("fat", fatfs_module);
+            mkfs_fat.linkLibC();
+            FatFS.link(mkfs_fat, fatfs_config);
+
+            return mkfs_fat.getEmittedBin();
+        },
+
+        .custom => |path| return path,
+
+        else => std.debug.panic("Unsupported builtin file system: {s}", .{@tagName(fs)}),
     }
 }
 
@@ -127,6 +168,8 @@ pub fn initializeDisk(b: *std.Build, size: u64, content: Content) *InitializeDis
         .content = content.dupe(b) catch @panic("out of memory"),
         .size = size,
     };
+
+    ids.content.resolveFileSystems(b);
 
     ids.content.pushDependenciesTo(&ids.step);
 
@@ -170,11 +213,7 @@ pub const InitializeDiskStep = struct {
             .gpt => |table| { //  GptTable
                 manifest.hash.addBytes(&table.disk_id);
 
-                for (table.partitions) |part_or_null| {
-                    const part = part_or_null orelse {
-                        manifest.hash.addBytes("none");
-                        break;
-                    };
+                for (table.partitions) |part| {
                     manifest.hash.addBytes(&part.part_id);
                     manifest.hash.addBytes(&part.type);
                     manifest.hash.addBytes(std.mem.sliceAsBytes(&part.name));
@@ -299,9 +338,9 @@ pub const InitializeDiskStep = struct {
 
                             desc[0] = if (part.bootable) 0x80 else 0x00;
 
-                            desc[1..4].* = mbr.lbaToChs(lba); // chs_start
+                            desc[1..4].* = mbr.encodeMbrChsEntry(lba); // chs_start
                             desc[4] = @intFromEnum(part.type);
-                            desc[5..8].* = mbr.lbaToChs(lba + size - 1); // chs_end
+                            desc[5..8].* = mbr.encodeMbrChsEntry(lba + size - 1); // chs_end
                             std.mem.writeIntLittle(u32, desc[8..12], lba); // lba_start
                             std.mem.writeIntLittle(u32, desc[12..16], size); // block_count
 
@@ -341,8 +380,58 @@ pub const InitializeDiskStep = struct {
             },
 
             .fs => |fs| {
-                std.log.err("{s}: file system {s} not supported yet!", .{ context.slice(), @tagName(fs.format) });
-                return error.FileSystemUnsupported;
+                const maker_exe = fs.executable.?.getPath2(b, asking);
+
+                try disk.sync();
+
+                const disk_image_path = switch (builtin.os.tag) {
+                    .linux => blk: {
+                        var self_pid = std.os.linux.getpid();
+                        break :blk b.fmt("/proc/{}/fd/{}", .{ self_pid, disk.handle });
+                    },
+
+                    else => @compileError("TODO: Support this on other OS as well!"),
+                };
+
+                var argv = std.ArrayList([]const u8).init(b.allocator);
+                defer argv.deinit();
+
+                try argv.appendSlice(&.{
+                    maker_exe, // exe
+                    disk_image_path, // image file
+                    b.fmt("0x{X:0>8}", .{base}), // filesystem offset (bytes)
+                    b.fmt("0x{X:0>8}", .{length}), // filesystem length (bytes)
+                    @tagName(fs.format), // filesystem type
+                    "format", // cmd 1: format the disk
+                    "mount", // cmd 2: mount it internally
+                });
+
+                for (fs.items) |item| {
+                    switch (item) {
+                        .empty_dir => |dir| {
+                            try argv.append(b.fmt("mkdir:{s}", .{dir}));
+                        },
+                        .copy_dir => |src_dst| {
+                            try argv.append(b.fmt("dir:{s}:{s}", .{
+                                src_dst.source.getPath2(b, asking),
+                                src_dst.destination,
+                            }));
+                        },
+                        .copy_file => |src_dst| {
+                            try argv.append(b.fmt("file:{s}:{s}", .{
+                                src_dst.source.getPath2(b, asking),
+                                src_dst.destination,
+                            }));
+                        },
+                    }
+                }
+
+                // use shared access to the file:
+                const stdout = b.exec(argv.items);
+
+                try disk.sync();
+
+                _ = stdout;
             },
 
             .data => |data| {
@@ -465,14 +554,9 @@ pub const Content = union(enum) {
             },
             .gpt => |table| {
                 var copy = table;
-                const partitions = try allocator.dupe(?*const gpt.Partition, table.partitions);
+                const partitions = try allocator.dupe(gpt.Partition, table.partitions);
                 for (partitions) |*part| {
-                    if (part.*) |*p| {
-                        const ptr = try b.allocator.create(gpt.Partition);
-                        ptr.* = p.*.*;
-                        ptr.data = try ptr.data.dupe(b);
-                        p.* = ptr;
-                    }
+                    part.data = try part.data.dupe(b);
                 }
                 copy.partitions = partitions;
                 return .{ .gpt = copy };
@@ -498,6 +582,11 @@ pub const Content = union(enum) {
                 }
                 copy.items = items;
 
+                switch (copy.format) {
+                    .custom => |*path| path.* = path.dupe(b),
+                    else => {},
+                }
+
                 return .{ .fs = copy };
             },
             .data => |data| {
@@ -521,9 +610,7 @@ pub const Content = union(enum) {
             },
             .gpt => |table| {
                 for (table.partitions) |part| {
-                    if (part) |p| {
-                        p.data.pushDependenciesTo(step);
-                    }
+                    part.data.pushDependenciesTo(step);
                 }
             },
             .fs => |fs| {
@@ -535,9 +622,35 @@ pub const Content = union(enum) {
                         },
                     }
                 }
+                if (fs.format == .custom) {
+                    fs.format.custom.addStepDependencies(step);
+                }
+                fs.executable.?.addStepDependencies(step); // Must be resolved already, invoke resolveFileSystems before!
             },
             .data => |data| data.addStepDependencies(step),
             .binary => |binary| step.dependOn(&binary.step),
+        }
+    }
+
+    pub fn resolveFileSystems(content: *Content, b: *std.Build) void {
+        switch (content.*) {
+            .uninitialized => {},
+            .mbr => |*table| {
+                for (&table.partitions) |*part| {
+                    if (part.*) |p| {
+                        @constCast(&p.data).resolveFileSystems(b);
+                    }
+                }
+            },
+            .gpt => |*table| {
+                for (table.partitions) |*part| {
+                    @constCast(&part.data).resolveFileSystems(b);
+                }
+            },
+            .fs => |*fs| {
+                fs.executable = resolveFilesystemMaker(b, fs.format);
+            },
+            .data, .binary => {},
         }
     }
 };
@@ -606,20 +719,84 @@ pub const mbr = struct {
         _,
     };
 
-    pub fn lbaToChs(lba: u32) [3]u8 {
-        const hpc = 512;
-        const spt = 512;
+    pub fn encodeMbrChsEntry(lba: u32) [3]u8 {
+        var chs = lbaToChs(lba);
 
-        const cyl: u10 = @intCast(lba / (hpc * spt));
-        const head: u8 = @intCast((lba % (hpc * spt)) / spt);
-        const sect: u6 = @intCast((lba % (hpc * spt)) % spt + 1);
+        if (chs.cylinder >= 1024) {
+            chs = .{
+                .cylinder = 1023,
+                .head = 255,
+                .sector = 63,
+            };
+        }
+
+        const cyl: u10 = @intCast(chs.cylinder);
+        const head: u8 = @intCast(chs.head);
+        const sect: u6 = @intCast(chs.sector);
 
         const sect_cyl: u8 = @as(u8, 0xC0) & @as(u8, @truncate(cyl >> 2)) + sect;
         const sect_8: u8 = @truncate(cyl);
 
         return .{ head, sect_cyl, sect_8 };
     }
+
+    const CHS = struct {
+        cylinder: u32,
+        head: u8, // limit: 256
+        sector: u6, // limit: 64
+
+        pub fn init(c: u32, h: u8, s: u6) CHS {
+            return .{ .cylinder = c, .head = h, .sector = s };
+        }
+    };
+
+    pub fn lbaToChs(lba: u32) CHS {
+        const hpc = 255;
+        const spt = 63;
+
+        // C, H and S are the cylinder number, the head number, and the sector number
+        // LBA is the logical block address
+        // HPC is the maximum number of heads per cylinder (reported by disk drive, typically 16 for 28-bit LBA)
+        // SPT is the maximum number of sectors per track (reported by disk drive, typically 63 for 28-bit LBA)
+        // LBA = (C * HPC + H) * SPT + (S - 1)
+
+        const sector = (lba % spt);
+        const cyl_head = (lba / spt);
+
+        const head = (cyl_head % hpc);
+        const cyl = (cyl_head / hpc);
+
+        return CHS{
+            .sector = @intCast(sector + 1),
+            .head = @intCast(head),
+            .cylinder = cyl,
+        };
+    }
 };
+
+// test "lba to chs" {
+//     // table from https://en.wikipedia.org/wiki/Logical_block_addressing#CHS_conversion
+//     try std.testing.expectEqual(mbr.CHS.init(0, 0, 1), mbr.lbaToChs(0));
+//     try std.testing.expectEqual(mbr.CHS.init(0, 0, 2), mbr.lbaToChs(1));
+//     try std.testing.expectEqual(mbr.CHS.init(0, 0, 3), mbr.lbaToChs(2));
+//     try std.testing.expectEqual(mbr.CHS.init(0, 0, 63), mbr.lbaToChs(62));
+//     try std.testing.expectEqual(mbr.CHS.init(0, 1, 1), mbr.lbaToChs(63));
+//     try std.testing.expectEqual(mbr.CHS.init(0, 15, 1), mbr.lbaToChs(945));
+//     try std.testing.expectEqual(mbr.CHS.init(0, 15, 63), mbr.lbaToChs(1007));
+//     try std.testing.expectEqual(mbr.CHS.init(1, 0, 1), mbr.lbaToChs(1008));
+//     try std.testing.expectEqual(mbr.CHS.init(1, 0, 63), mbr.lbaToChs(1070));
+//     try std.testing.expectEqual(mbr.CHS.init(1, 1, 1), mbr.lbaToChs(1071));
+//     try std.testing.expectEqual(mbr.CHS.init(1, 1, 63), mbr.lbaToChs(1133));
+//     try std.testing.expectEqual(mbr.CHS.init(1, 2, 1), mbr.lbaToChs(1134));
+//     try std.testing.expectEqual(mbr.CHS.init(1, 15, 63), mbr.lbaToChs(2015));
+//     try std.testing.expectEqual(mbr.CHS.init(2, 0, 1), mbr.lbaToChs(2016));
+//     try std.testing.expectEqual(mbr.CHS.init(15, 15, 63), mbr.lbaToChs(16127));
+//     try std.testing.expectEqual(mbr.CHS.init(16, 0, 1), mbr.lbaToChs(16128));
+//     try std.testing.expectEqual(mbr.CHS.init(31, 15, 63), mbr.lbaToChs(32255));
+//     try std.testing.expectEqual(mbr.CHS.init(32, 0, 1), mbr.lbaToChs(32256));
+//     try std.testing.expectEqual(mbr.CHS.init(16319, 15, 63), mbr.lbaToChs(16450559));
+//     try std.testing.expectEqual(mbr.CHS.init(16382, 15, 63), mbr.lbaToChs(16514063));
+// }
 
 pub const gpt = struct {
     pub const Guid = [16]u8;
@@ -627,7 +804,7 @@ pub const gpt = struct {
     pub const Table = struct {
         disk_id: Guid,
 
-        partitions: []const ?*const Partition,
+        partitions: []const Partition,
     };
 
     pub const Partition = struct {
@@ -700,6 +877,22 @@ pub const FileSystem = struct {
         iso_9660,
         iso_13490,
         udf,
+
+        /// usage: mkfs.<tool> <image> <base> <length> <filesystem> <ops...>
+        ///  <image> is a path to the image file
+        ///  <base> is the byte base of the file system
+        ///  <length> is the byte length of the file system
+        ///  <filesystem> is the file system that should be used to format
+        ///  <ops...> is a list of operations that should be performed on the file system:
+        ///  - format            Formats the disk image.
+        ///  - mount             Mounts the file system, must be before all following:
+        ///  - mkdir:<dst>       Creates directory <dst> and all necessary parents.
+        ///  - file:<src>:<dst>  Copy <src> to path <dst>. If <dst> exists, it will be overwritten.
+        ///  - dir:<src>:<dst>   Copy <src> recursively into <dst>. If <dst> exists, they will be merged.
+        ///
+        /// <dst> paths are always rooted, even if they don't start with a /, and always use / as a path separator.
+        ///
+        custom: std.Build.LazyPath,
     };
 
     pub const Copy = struct {
@@ -716,4 +909,7 @@ pub const FileSystem = struct {
     format: Format,
     label: []const u8,
     items: []const Item,
+
+    // private:
+    executable: ?std.Build.LazyPath = null,
 };

@@ -6,6 +6,12 @@ const App = shared.App(@This());
 
 pub const main = App.main;
 
+pub const std_options = struct {
+    pub const log_scope_levels = &.{
+        .{ .scope = .fatfs, .level = .warn },
+    };
+};
+
 var fat_disk: fatfs.Disk = fatfs.Disk{
     .getStatusFn = disk_getStatus,
     .initializeFn = disk_initialize,
