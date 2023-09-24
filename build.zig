@@ -230,6 +230,8 @@ pub const InitializeDiskStep = struct {
             .fs => |fs| { //  FileSystem
                 manifest.hash.add(@as(u64, fs.items.len));
                 manifest.hash.addBytes(@tagName(fs.format));
+                manifest.hash.addBytes(fs.executable.?.getPath2(b, asking));
+
                 // TODO: Properly add internal file system
                 for (fs.items) |entry| {
                     manifest.hash.addBytes(@tagName(entry));
