@@ -24,8 +24,15 @@ var filesystem_format: fatfs.DiskFormat = undefined;
 
 var filesystem: fatfs.FileSystem = undefined;
 
+const format_mapping = std.ComptimeStringMap(fatfs.DiskFormat, &.{
+    .{ "fat12", .fat },
+    .{ "fat16", .fat },
+    .{ "fat32", .fat32 },
+    .{ "exfat", .exfat },
+});
+
 pub fn init(file_system: []const u8) !void {
-    filesystem_format = std.meta.stringToEnum(fatfs.DiskFormat, file_system) orelse return error.InvalidFilesystem;
+    filesystem_format = format_mapping.get(file_system) orelse return error.InvalidFilesystem;
     fatfs.disks[0] = &fat_disk;
 }
 

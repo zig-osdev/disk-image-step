@@ -1,6 +1,11 @@
 const std = @import("std");
 const builtin = @import("builtin");
 
+fn root() []const u8 {
+    return comptime (std.fs.path.dirname(@src().file) orelse ".");
+}
+const build_root = root();
+
 pub const KiB = 1024;
 pub const MiB = 1024 * KiB;
 pub const GiB = 1024 * MiB;
@@ -125,7 +130,7 @@ fn resolveFilesystemMaker(b: *std.Build, fs: FileSystem.Format) std.Build.LazyPa
 
             const mkfs_fat = b.addExecutable(.{
                 .name = "mkfs.fat",
-                .root_source_file = .{ .path = "src/mkfs.fat.zig" },
+                .root_source_file = .{ .cwd_relative = build_root ++ "/src/mkfs.fat.zig" },
             });
             mkfs_fat.addModule("fat", fatfs_module);
             mkfs_fat.linkLibC();
@@ -190,6 +195,27 @@ pub const InitializeDiskStep = struct {
         return .{ .generated = &ids.disk_file };
     }
 
+    fn addDirectoryToCache(b: *std.Build, manifest: *std.Build.Cache.Manifest, parent: std.fs.Dir, path: []const u8) !void {
+        var dir = try parent.openIterableDir(path, .{});
+        defer dir.close();
+
+        var walker = try dir.walk(b.allocator);
+        defer walker.deinit();
+
+        while (try walker.next()) |entry| {
+            switch (entry.kind) {
+                .file => {
+                    const abs_path = try entry.dir.realpathAlloc(b.allocator, entry.basename);
+                    defer b.allocator.free(abs_path);
+                    _ = try manifest.addFile(abs_path, null);
+                },
+                .directory => try addDirectoryToCache(b, manifest, entry.dir, entry.basename),
+
+                else => return error.Unsupported,
+            }
+        }
+    }
+
     fn addToCacheManifest(b: *std.Build, asking: *std.Build.Step, manifest: *std.Build.Cache.Manifest, content: Content) !void {
         manifest.hash.addBytes(@tagName(content));
         switch (content) {
@@ -241,7 +267,7 @@ pub const InitializeDiskStep = struct {
                         },
                         .copy_dir => |dir| {
                             manifest.hash.addBytes(dir.destination);
-                            manifest.hash.addBytes(dir.source.getPath2(b, asking));
+                            try addDirectoryToCache(b, manifest, std.fs.cwd(), dir.source.getPath2(b, asking));
                         },
                         .copy_file => |file| {
                             manifest.hash.addBytes(file.destination);
@@ -914,4 +940,51 @@ pub const FileSystem = struct {
 
     // private:
     executable: ?std.Build.LazyPath = null,
+};
+
+pub const FileSystemBuilder = struct {
+    b: *std.Build,
+    list: std.ArrayListUnmanaged(FileSystem.Item),
+
+    pub fn init(b: *std.Build) FileSystemBuilder {
+        return FileSystemBuilder{
+            .b = b,
+            .list = .{},
+        };
+    }
+
+    pub fn finalize(fsb: *FileSystemBuilder, options: struct {
+        format: FileSystem.Format,
+        label: []const u8,
+    }) FileSystem {
+        return FileSystem{
+            .format = options.format,
+            .label = fsb.b.dupe(options.label),
+            .items = fsb.list.toOwnedSlice(fsb.b.allocator) catch @panic("out of memory"),
+        };
+    }
+
+    pub fn addFile(fsb: *FileSystemBuilder, source: std.Build.LazyPath, destination: []const u8) void {
+        fsb.list.append(fsb.b.allocator, .{
+            .copy_file = .{
+                .source = source.dupe(fsb.b),
+                .destination = fsb.b.dupe(destination),
+            },
+        }) catch @panic("out of memory");
+    }
+
+    pub fn addDirectory(fsb: *FileSystemBuilder, source: std.Build.LazyPath, destination: []const u8) void {
+        fsb.list.append(fsb.b.allocator, .{
+            .copy_dir = .{
+                .source = source.dupe(fsb.b),
+                .destination = fsb.b.dupe(destination),
+            },
+        }) catch @panic("out of memory");
+    }
+
+    pub fn mkdir(fsb: *FileSystemBuilder, destination: []const u8) void {
+        fsb.list.append(fsb.b.allocator, .{
+            .empty_dir = fsb.b.dupe(destination),
+        }) catch @panic("out of memory");
+    }
 };
