@@ -414,7 +414,7 @@ pub const InitializeDiskStep = struct {
 
                 const disk_image_path = switch (builtin.os.tag) {
                     .linux => blk: {
-                        var self_pid = std.os.linux.getpid();
+                        const self_pid = std.os.linux.getpid();
                         break :blk b.fmt("/proc/{}/fd/{}", .{ self_pid, disk.handle });
                     },
 
@@ -506,7 +506,7 @@ pub const InitializeDiskStep = struct {
         const b = step.owner;
         _ = progress;
 
-        const ids = @fieldParentPtr(InitializeDiskStep, "step", step);
+        const ids: *InitializeDiskStep = @fieldParentPtr("step", step);
 
         var man = b.cache.obtain();
         defer man.deinit();
