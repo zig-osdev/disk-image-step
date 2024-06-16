@@ -6,10 +6,10 @@ const App = shared.App(@This());
 
 pub const main = App.main;
 
-pub const std_options = struct {
-    pub const log_scope_levels = &.{
+pub const std_options: std.Options = .{
+    .log_scope_levels = &.{
         .{ .scope = .fatfs, .level = .warn },
-    };
+    },
 };
 
 var fat_disk: fatfs.Disk = fatfs.Disk{
@@ -24,7 +24,7 @@ var filesystem_format: fatfs.DiskFormat = undefined;
 
 var filesystem: fatfs.FileSystem = undefined;
 
-const format_mapping = std.ComptimeStringMap(fatfs.DiskFormat, &.{
+const format_mapping = std.StaticStringMap(fatfs.DiskFormat).initComptime(&.{
     .{ "fat12", .fat },
     .{ "fat16", .fat },
     .{ "fat32", .fat32 },
@@ -52,7 +52,7 @@ pub fn mount() !void {
 }
 
 pub fn mkdir(path: []const u8) !void {
-    var joined = try std.mem.concatWithSentinel(App.allocator, u8, &.{ "0:/", path }, 0);
+    const joined = try std.mem.concatWithSentinel(App.allocator, u8, &.{ "0:/", path }, 0);
     fatfs.mkdir(joined) catch |err| switch (err) {
         error.Exist => {}, // this is good
         else => |e| return e,
@@ -60,7 +60,7 @@ pub fn mkdir(path: []const u8) !void {
 }
 
 pub fn mkfile(path: []const u8, host_file: std.fs.File) !void {
-    var path_z = try App.allocator.dupeZ(u8, path);
+    const path_z = try App.allocator.dupeZ(u8, path);
     defer App.allocator.free(path_z);
 
     const stat = try host_file.stat();

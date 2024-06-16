@@ -105,7 +105,7 @@ pub fn App(comptime Context: type) type {
 
                         // std.log.info("dir(\"{}\", \"{}\")", .{ std.zig.fmtEscapes(src), std.zig.fmtEscapes(dst) });
 
-                        var iter_dir = try std.fs.cwd().openIterableDir(src, .{});
+                        var iter_dir = try std.fs.cwd().openDir(src, .{ .iterate = true });
                         defer iter_dir.close();
 
                         var walker = try iter_dir.walk(allocator);
@@ -134,7 +134,7 @@ pub fn App(comptime Context: type) type {
                                 },
 
                                 else => {
-                                    var realpath_buffer: [std.os.PATH_MAX]u8 = undefined;
+                                    var realpath_buffer: [std.fs.max_path_bytes]u8 = undefined;
                                     std.log.warn("cannot copy file {!s}: {s} is not a supported file type!", .{
                                         entry.dir.realpath(entry.path, &realpath_buffer),
                                         @tagName(entry.kind),

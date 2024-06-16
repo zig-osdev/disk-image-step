@@ -10,10 +10,14 @@ pub const KiB = 1024;
 pub const MiB = 1024 * KiB;
 pub const GiB = 1024 * MiB;
 
-fn usageDemo(b: *std.Build, debug_step: *std.Build.Step) void {
-    installDebugDisk(debug_step, "uninitialized.img", 50 * MiB, .uninitialized);
+fn usageDemo(
+    b: *std.Build,
+    dependency: *std.Build.Dependency,
+    debug_step: *std.Build.Step,
+) void {
+    installDebugDisk(dependency, debug_step, "uninitialized.img", 50 * MiB, .uninitialized);
 
-    installDebugDisk(debug_step, "empty-mbr.img", 50 * MiB, .{
+    installDebugDisk(dependency, debug_step, "empty-mbr.img", 50 * MiB, .{
         .mbr = .{
             .partitions = .{
                 null,
@@ -24,7 +28,7 @@ fn usageDemo(b: *std.Build, debug_step: *std.Build.Step) void {
         },
     });
 
-    installDebugDisk(debug_step, "manual-offset-mbr.img", 50 * MiB, .{
+    installDebugDisk(dependency, debug_step, "manual-offset-mbr.img", 50 * MiB, .{
         .mbr = .{
             .partitions = .{
                 &.{ .offset = 2048 + 0 * 10 * MiB, .size = 10 * MiB, .bootable = true, .type = .fat32_lba, .data = .uninitialized },
@@ -35,7 +39,7 @@ fn usageDemo(b: *std.Build, debug_step: *std.Build.Step) void {
         },
     });
 
-    installDebugDisk(debug_step, "auto-offset-mbr.img", 50 * MiB, .{
+    installDebugDisk(dependency, debug_step, "auto-offset-mbr.img", 50 * MiB, .{
         .mbr = .{
             .partitions = .{
                 &.{ .size = 7 * MiB, .bootable = true, .type = .fat32_lba, .data = .uninitialized },
@@ -46,7 +50,7 @@ fn usageDemo(b: *std.Build, debug_step: *std.Build.Step) void {
         },
     });
 
-    installDebugDisk(debug_step, "empty-fat32.img", 50 * MiB, .{
+    installDebugDisk(dependency, debug_step, "empty-fat32.img", 50 * MiB, .{
         .fs = .{
             .format = .fat32,
             .label = "EMPTY",
@@ -54,7 +58,7 @@ fn usageDemo(b: *std.Build, debug_step: *std.Build.Step) void {
         },
     });
 
-    installDebugDisk(debug_step, "initialized-fat32.img", 50 * MiB, .{
+    installDebugDisk(dependency, debug_step, "initialized-fat32.img", 50 * MiB, .{
         .fs = .{
             .format = .fat32,
             .label = "ROOTFS",
@@ -62,13 +66,13 @@ fn usageDemo(b: *std.Build, debug_step: *std.Build.Step) void {
                 .{ .empty_dir = "boot/EFI/refind/icons" },
                 .{ .empty_dir = "/boot/EFI/nixos/.extra-files/" },
                 .{ .empty_dir = "Users/xq/" },
-                .{ .copy_dir = .{ .source = relpath(b, "dummy/Windows"), .destination = "Windows" } },
-                .{ .copy_file = .{ .source = relpath(b, "dummy/README.md"), .destination = "Users/xq/README.md" } },
+                .{ .copy_dir = .{ .source = b.path("dummy/Windows"), .destination = "Windows" } },
+                .{ .copy_file = .{ .source = b.path("dummy/README.md"), .destination = "Users/xq/README.md" } },
             },
         },
     });
 
-    installDebugDisk(debug_step, "initialized-fat32-in-mbr-partitions.img", 100 * MiB, .{
+    installDebugDisk(dependency, debug_step, "initialized-fat32-in-mbr-partitions.img", 100 * MiB, .{
         .mbr = .{
             .partitions = .{
                 &.{
@@ -83,8 +87,8 @@ fn usageDemo(b: *std.Build, debug_step: *std.Build.Step) void {
                                 .{ .empty_dir = "boot/EFI/refind/icons" },
                                 .{ .empty_dir = "/boot/EFI/nixos/.extra-files/" },
                                 .{ .empty_dir = "Users/xq/" },
-                                .{ .copy_dir = .{ .source = relpath(b, "dummy/Windows"), .destination = "Windows" } },
-                                .{ .copy_file = .{ .source = relpath(b, "dummy/README.md"), .destination = "Users/xq/README.md" } },
+                                .{ .copy_dir = .{ .source = b.path("dummy/Windows"), .destination = "Windows" } },
+                                .{ .copy_file = .{ .source = b.path("dummy/README.md"), .destination = "Users/xq/README.md" } },
                             },
                         },
                     },
@@ -104,45 +108,49 @@ fn usageDemo(b: *std.Build, debug_step: *std.Build.Step) void {
     // });
 }
 
-const MyBuild = @This();
-
-const FatFS = @import("zfat");
-
-const fatfs_config = FatFS.Config{
-    // .max_long_name_len = 121,
-    .code_page = .us,
-    .volumes = .{ .count = 1 },
-    .rtc = .dynamic,
-    .mkfs = true,
-    .exfat = true,
-};
-
 pub fn build(b: *std.Build) void {
+    // Steps:
+
     const debug_step = b.step("debug", "Builds a basic exemplary disk image.");
 
-    usageDemo(b, debug_step);
+    // Dependency Setup:
+
+    const zfat_dep = b.dependency("zfat", .{
+        // .max_long_name_len = 121,
+        .code_page = .us,
+        .@"volume-count" = @as(u32, 1),
+        // .rtc = .dynamic,
+        .mkfs = true,
+        .exfat = true,
+    });
+
+    const zfat_mod = zfat_dep.module("zfat");
+
+    const mkfs_fat = b.addExecutable(.{
+        .name = "mkfs.fat",
+        .target = b.host,
+        .optimize = .ReleaseSafe,
+        .root_source_file = .{ .cwd_relative = build_root ++ "/src/mkfs.fat.zig" },
+    });
+    mkfs_fat.root_module.addImport("fat", zfat_mod);
+    mkfs_fat.linkLibC();
+    b.installArtifact(mkfs_fat);
+
+    // Usage:
+    var self_dep = std.Build.Dependency{
+        .builder = b,
+    };
+    usageDemo(b, &self_dep, debug_step);
 }
 
-fn resolveFilesystemMaker(b: *std.Build, fs: FileSystem.Format) std.Build.LazyPath {
-    switch (fs) {
-        .fat12, .fat16, .fat32, .exfat => {
-            const fatfs_module = FatFS.createModule(b, fatfs_config);
+fn resolveFilesystemMaker(dependency: *std.Build.Dependency, fs: FileSystem.Format) std.Build.LazyPath {
+    return switch (fs) {
+        .fat12, .fat16, .fat32, .exfat => dependency.artifact("mkfs.fat").getEmittedBin(),
 
-            const mkfs_fat = b.addExecutable(.{
-                .name = "mkfs.fat",
-                .root_source_file = .{ .cwd_relative = build_root ++ "/src/mkfs.fat.zig" },
-            });
-            mkfs_fat.addModule("fat", fatfs_module);
-            mkfs_fat.linkLibC();
-            FatFS.link(mkfs_fat, fatfs_config);
-
-            return mkfs_fat.getEmittedBin();
-        },
-
-        .custom => |path| return path,
+        .custom => |path| path,
 
         else => std.debug.panic("Unsupported builtin file system: {s}", .{@tagName(fs)}),
-    }
+    };
 }
 
 fn relpath(b: *std.Build, path: []const u8) std.Build.LazyPath {
@@ -151,18 +159,24 @@ fn relpath(b: *std.Build, path: []const u8) std.Build.LazyPath {
     };
 }
 
-fn installDebugDisk(install_step: *std.Build.Step, name: []const u8, size: u64, content: Content) void {
-    const initialize_disk = initializeDisk(install_step.owner, size, content);
+fn installDebugDisk(
+    dependency: *std.Build.Dependency,
+    install_step: *std.Build.Step,
+    name: []const u8,
+    size: u64,
+    content: Content,
+) void {
+    const initialize_disk = initializeDisk(dependency, size, content);
     const install_disk = install_step.owner.addInstallFile(initialize_disk.getImageFile(), name);
     install_step.dependOn(&install_disk.step);
 }
 
-pub fn initializeDisk(b: *std.Build, size: u64, content: Content) *InitializeDiskStep {
-    const ids = b.allocator.create(InitializeDiskStep) catch @panic("out of memory");
+pub fn initializeDisk(dependency: *std.Build.Dependency, size: u64, content: Content) *InitializeDiskStep {
+    const ids = dependency.builder.allocator.create(InitializeDiskStep) catch @panic("out of memory");
 
     ids.* = InitializeDiskStep{
         .step = std.Build.Step.init(.{
-            .owner = b,
+            .owner = dependency.builder, // TODO: Is this correct?
             .id = .custom,
             .name = "initialize disk",
             .makeFn = InitializeDiskStep.make,
@@ -170,11 +184,11 @@ pub fn initializeDisk(b: *std.Build, size: u64, content: Content) *InitializeDis
             .max_rss = 0,
         }),
         .disk_file = .{ .step = &ids.step },
-        .content = content.dupe(b) catch @panic("out of memory"),
+        .content = content.dupe(dependency.builder) catch @panic("out of memory"),
         .size = size,
     };
 
-    ids.content.resolveFileSystems(b);
+    ids.content.resolveFileSystems(dependency);
 
     ids.content.pushDependenciesTo(&ids.step);
 
@@ -192,11 +206,13 @@ pub const InitializeDiskStep = struct {
     disk_file: std.Build.GeneratedFile,
 
     pub fn getImageFile(ids: *InitializeDiskStep) std.Build.LazyPath {
-        return .{ .generated = &ids.disk_file };
+        return .{ .generated = .{
+            .file = &ids.disk_file,
+        } };
     }
 
     fn addDirectoryToCache(b: *std.Build, manifest: *std.Build.Cache.Manifest, parent: std.fs.Dir, path: []const u8) !void {
-        var dir = try parent.openIterableDir(path, .{});
+        var dir = try parent.openDir(path, .{ .iterate = true });
         defer dir.close();
 
         var walker = try dir.walk(b.allocator);
@@ -307,8 +323,8 @@ pub const InitializeDiskStep = struct {
 
                     @memcpy(boot_sector[0..table.bootloader.len], &table.bootloader);
 
-                    std.mem.writeIntLittle(u32, boot_sector[0x1B8..0x1BC], if (table.disk_id) |disk_id| disk_id else 0x0000_0000);
-                    std.mem.writeIntLittle(u16, boot_sector[0x1BC..0x1BE], 0x0000);
+                    std.mem.writeInt(u32, boot_sector[0x1B8..0x1BC], if (table.disk_id) |disk_id| disk_id else 0x0000_0000, .little);
+                    std.mem.writeInt(u16, boot_sector[0x1BC..0x1BE], 0x0000, .little);
 
                     var all_auto = true;
                     var all_manual = true;
@@ -369,8 +385,8 @@ pub const InitializeDiskStep = struct {
                             desc[1..4].* = mbr.encodeMbrChsEntry(lba); // chs_start
                             desc[4] = @intFromEnum(part.type);
                             desc[5..8].* = mbr.encodeMbrChsEntry(lba + size - 1); // chs_end
-                            std.mem.writeIntLittle(u32, desc[8..12], lba); // lba_start
-                            std.mem.writeIntLittle(u32, desc[12..16], size); // block_count
+                            std.mem.writeInt(u32, desc[8..12], lba, .little); // lba_start
+                            std.mem.writeInt(u32, desc[12..16], size, .little); // block_count
 
                             auto_offset += part.size;
                         } else {
@@ -455,7 +471,7 @@ pub const InitializeDiskStep = struct {
                 }
 
                 // use shared access to the file:
-                const stdout = b.exec(argv.items);
+                const stdout = b.run(argv.items);
 
                 try disk.sync();
 
@@ -502,13 +518,13 @@ pub const InitializeDiskStep = struct {
         }
     }
 
-    fn make(step: *std.Build.Step, progress: *std.Progress.Node) !void {
+    fn make(step: *std.Build.Step, progress: std.Progress.Node) !void {
         const b = step.owner;
         _ = progress;
 
         const ids: *InitializeDiskStep = @fieldParentPtr("step", step);
 
-        var man = b.cache.obtain();
+        var man = b.graph.cache.obtain();
         defer man.deinit();
 
         man.hash.addBytes(&.{ 232, 8, 75, 249, 2, 210, 51, 118, 171, 12 }); // Change when impl changes
@@ -561,7 +577,7 @@ pub const Content = union(enum) {
 
     data: std.Build.LazyPath,
 
-    binary: *std.Build.CompileStep,
+    binary: *std.Build.Step.Compile,
 
     pub fn dupe(content: Content, b: *std.Build) !Content {
         const allocator = b.allocator;
@@ -660,23 +676,23 @@ pub const Content = union(enum) {
         }
     }
 
-    pub fn resolveFileSystems(content: *Content, b: *std.Build) void {
+    pub fn resolveFileSystems(content: *Content, dependency: *std.Build.Dependency) void {
         switch (content.*) {
             .uninitialized => {},
             .mbr => |*table| {
                 for (&table.partitions) |*part| {
                     if (part.*) |p| {
-                        @constCast(&p.data).resolveFileSystems(b);
+                        @constCast(&p.data).resolveFileSystems(dependency);
                     }
                 }
             },
             .gpt => |*table| {
                 for (table.partitions) |*part| {
-                    @constCast(&part.data).resolveFileSystems(b);
+                    @constCast(&part.data).resolveFileSystems(dependency);
                 }
             },
             .fs => |*fs| {
-                fs.executable = resolveFilesystemMaker(b, fs.format);
+                fs.executable = resolveFilesystemMaker(dependency, fs.format);
             },
             .data, .binary => {},
         }
