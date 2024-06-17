@@ -119,6 +119,7 @@ pub fn build(b: *std.Build) void {
         // .max_long_name_len = 121,
         .code_page = .us,
         .@"volume-count" = @as(u32, 1),
+        .@"sector-size" = @as(u32, 512),
         // .rtc = .dynamic,
         .mkfs = true,
         .exfat = true,
@@ -130,7 +131,7 @@ pub fn build(b: *std.Build) void {
         .name = "mkfs.fat",
         .target = b.host,
         .optimize = .ReleaseSafe,
-        .root_source_file = .{ .cwd_relative = build_root ++ "/src/mkfs.fat.zig" },
+        .root_source_file = b.path("src/mkfs.fat.zig"),
     });
     mkfs_fat.root_module.addImport("fat", zfat_mod);
     mkfs_fat.linkLibC();
@@ -305,8 +306,13 @@ pub const InitializeDiskStep = struct {
 
     const HumanContext = std.BoundedArray(u8, 256);
 
-    fn writeDiskImage(b: *std.Build, asking: *std.Build.Step, disk: std.fs.File, base: u64, length: u64, content: Content, context: *HumanContext) !void {
-        try disk.seekTo(base);
+    const DiskImage = struct {
+        path: []const u8,
+        handle: *std.fs.File,
+    };
+
+    fn writeDiskImage(b: *std.Build, asking: *std.Build.Step, disk: DiskImage, base: u64, length: u64, content: Content, context: *HumanContext) !void {
+        try disk.handle.seekTo(base);
 
         const context_len = context.len;
         defer context.len = context_len;
@@ -396,7 +402,7 @@ pub const InitializeDiskStep = struct {
                     boot_sector[0x01FE] = 0x55;
                     boot_sector[0x01FF] = 0xAA;
 
-                    try disk.writeAll(&boot_sector);
+                    try disk.handle.writeAll(&boot_sector);
                 }
 
                 {
@@ -426,23 +432,23 @@ pub const InitializeDiskStep = struct {
             .fs => |fs| {
                 const maker_exe = fs.executable.?.getPath2(b, asking);
 
-                try disk.sync();
+                try disk.handle.sync();
 
-                const disk_image_path = switch (builtin.os.tag) {
-                    .linux => blk: {
-                        const self_pid = std.os.linux.getpid();
-                        break :blk b.fmt("/proc/{}/fd/{}", .{ self_pid, disk.handle });
-                    },
+                // const disk_image_path = switch (builtin.os.tag) {
+                //     .linux => blk: {
+                //         const self_pid = std.os.linux.getpid();
+                //         break :blk b.fmt("/proc/{}/fd/{}", .{ self_pid, disk.handle });
+                //     },
 
-                    else => @compileError("TODO: Support this on other OS as well!"),
-                };
+                //     else => @compileError("TODO: Support this on other OS as well!"),
+                // };
 
                 var argv = std.ArrayList([]const u8).init(b.allocator);
                 defer argv.deinit();
 
                 try argv.appendSlice(&.{
                     maker_exe, // exe
-                    disk_image_path, // image file
+                    disk.path, // image file
                     b.fmt("0x{X:0>8}", .{base}), // filesystem offset (bytes)
                     b.fmt("0x{X:0>8}", .{length}), // filesystem length (bytes)
                     @tagName(fs.format), // filesystem type
@@ -473,7 +479,7 @@ pub const InitializeDiskStep = struct {
                 // use shared access to the file:
                 const stdout = b.run(argv.items);
 
-                try disk.sync();
+                try disk.handle.sync();
 
                 _ = stdout;
             },
@@ -490,7 +496,7 @@ pub const InitializeDiskStep = struct {
         }
     }
 
-    fn copyFileToImage(disk: std.fs.File, max_length: u64, dir: std.fs.Dir, path: []const u8, context: []const u8) !void {
+    fn copyFileToImage(disk: DiskImage, max_length: u64, dir: std.fs.Dir, path: []const u8, context: []const u8) !void {
         errdefer std.log.err("{s}: failed to copy data to image.", .{context});
 
         var file = try dir.openFile(path, .{});
@@ -510,11 +516,11 @@ pub const InitializeDiskStep = struct {
 
         var pumper = IoPump.init();
 
-        try pumper.pump(file.reader(), disk.writer());
+        try pumper.pump(file.reader(), disk.handle.writer());
 
         const padding = max_length - stat.size;
         if (padding > 0) {
-            try disk.writer().writeByteNTimes(' ', padding);
+            try disk.handle.writer().writeByteNTimes(' ', padding);
         }
     }
 
@@ -549,7 +555,9 @@ pub const InitializeDiskStep = struct {
             return;
 
         {
-            var disk = try std.fs.cwd().createFile(ids.disk_file.path.?, .{});
+            const disk_path = ids.disk_file.path.?;
+
+            var disk = try std.fs.cwd().createFile(disk_path, .{});
             defer disk.close();
 
             try disk.seekTo(ids.size - 1);
@@ -559,7 +567,12 @@ pub const InitializeDiskStep = struct {
             var context = HumanContext{};
             context.appendSliceAssumeCapacity("disk");
 
-            try writeDiskImage(b, step, disk, 0, ids.size, ids.content, &context);
+            const disk_image = DiskImage{
+                .path = disk_path,
+                .handle = &disk,
+            };
+
+            try writeDiskImage(b, step, disk_image, 0, ids.size, ids.content, &context);
         }
 
         // if (!step.result_cached)

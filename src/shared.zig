@@ -46,7 +46,9 @@ pub fn App(comptime Context: type) type {
             if (command_list.len == 0)
                 return mistake("no commands.", .{});
 
-            var image_file = try std.fs.cwd().openFile(image_file_path, .{ .mode = .read_write });
+            var image_file = try std.fs.cwd().openFile(image_file_path, .{
+                .mode = .read_write,
+            });
             defer image_file.close();
 
             const stat = try image_file.stat();
@@ -200,7 +202,7 @@ const Command = enum {
     dir,
 };
 
-pub const Block = [512]u8;
+pub const Block = [BlockDevice.block_size]u8;
 
 pub const BlockDevice = struct {
     pub const block_size = 512;

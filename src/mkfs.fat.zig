@@ -48,7 +48,7 @@ pub fn format() !void {
 }
 
 pub fn mount() !void {
-    try fatfs.FileSystem.mount(&filesystem, "0:", true);
+    try filesystem.mount("0:", true);
 }
 
 pub fn mkdir(path: []const u8) !void {
@@ -95,11 +95,9 @@ fn disk_initialize(intf: *fatfs.Disk) fatfs.Disk.Error!fatfs.Disk.Status {
 fn disk_read(intf: *fatfs.Disk, buff: [*]u8, sector: fatfs.LBA, count: c_uint) fatfs.Disk.Error!void {
     _ = intf;
 
-    const block_ptr = @as([*][512]u8, @ptrCast(buff));
-
-    var i: usize = 0;
-    while (i < count) : (i += 1) {
-        block_ptr[i] = App.device.read(sector + i) catch return error.IoError;
+    const blocks = std.mem.bytesAsSlice(shared.Block, buff[0 .. count * shared.BlockDevice.block_size]);
+    for (blocks, 0..) |*block, i| {
+        block.* = App.device.read(sector + i) catch return error.IoError;
     }
 }
 
