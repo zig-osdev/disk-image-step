@@ -504,7 +504,7 @@ pub const InitializeDiskStep = struct {
 
         const stat = try file.stat();
         if (stat.size > max_length) {
-            var realpath_buffer: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+            var realpath_buffer: [std.fs.max_path_bytes]u8 = undefined;
             std.log.err("{s}: The file '{!s}' exceeds the size of the container. The file is {:.2} large, while the container only allows for {:.2}.", .{
                 context,
                 dir.realpath(path, &realpath_buffer),
