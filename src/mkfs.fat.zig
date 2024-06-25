@@ -12,7 +12,7 @@ pub const std_options: std.Options = .{
     },
 };
 
-var fat_disk: fatfs.Disk = fatfs.Disk{
+var fat_disk: fatfs.Disk = .{
     .getStatusFn = disk_getStatus,
     .initializeFn = disk_initialize,
     .readFn = disk_read,
