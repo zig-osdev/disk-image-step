@@ -70,7 +70,7 @@ pub fn App(comptime Context: type) type {
             try Context.init(file_system);
 
             for (command_list) |command_sequence| {
-                var cmd_iter = std.mem.split(u8, command_sequence, ":");
+                var cmd_iter = std.mem.splitScalar(u8, command_sequence, ':');
 
                 const command_str = cmd_iter.next() orelse return mistake("bad command", .{});
 
@@ -174,7 +174,7 @@ pub fn App(comptime Context: type) type {
             var list = std.ArrayList([]const u8).init(allocator);
             defer list.deinit();
 
-            var parts = std.mem.tokenize(u8, src_path, "\\/");
+            var parts = std.mem.tokenizeAny(u8, src_path, "\\/");
 
             while (parts.next()) |part| {
                 if (std.mem.eql(u8, part, ".")) {
