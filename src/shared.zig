@@ -8,9 +8,9 @@ const std = @import("std");
 //  <ops...> is a list of operations that should be performed on the file system:
 //  - format            Formats the disk image.
 //  - mount             Mounts the file system, must be before all following:
-//  - mkdir:<dst>       Creates directory <dst> and all necessary parents.
-//  - file:<src>:<dst>  Copy <src> to path <dst>. If <dst> exists, it will be overwritten.
-//  - dir:<src>:<dst>   Copy <src> recursively into <dst>. If <dst> exists, they will be merged.
+//  - mkdir;<dst>       Creates directory <dst> and all necessary parents.
+//  - file;<src>;<dst>  Copy <src> to path <dst>. If <dst> exists, it will be overwritten.
+//  - dir;<src>;<dst>   Copy <src> recursively into <dst>. If <dst> exists, they will be merged.
 //
 // <dst> paths are always rooted, even if they don't start with a /, and always use / as a path separator.
 //
@@ -56,7 +56,7 @@ pub fn App(comptime Context: type) type {
             if (byte_base + byte_len > stat.size)
                 return mistake("invalid offsets.", .{});
 
-            device = BlockDevice{
+            device = .{
                 .file = &image_file,
                 .base = byte_base,
                 .count = byte_len / BlockDevice.block_size,
@@ -70,7 +70,7 @@ pub fn App(comptime Context: type) type {
             try Context.init(file_system);
 
             for (command_list) |command_sequence| {
-                var cmd_iter = std.mem.splitScalar(u8, command_sequence, ':');
+                var cmd_iter = std.mem.splitScalar(u8, command_sequence, ';');
 
                 const command_str = cmd_iter.next() orelse return mistake("bad command", .{});
 
@@ -84,15 +84,15 @@ pub fn App(comptime Context: type) type {
                         try Context.mount();
                     },
                     .mkdir => {
-                        const dir = try normalize(cmd_iter.next() orelse return mistake("mkdir:<dst> is missing it's <dst> path!", .{}));
+                        const dir = try normalize(cmd_iter.next() orelse return mistake("mkdir;<dst> is missing it's <dst> path!", .{}));
 
                         // std.log.info("mkdir(\"{}\")", .{std.zig.fmtEscapes(dir)});
 
                         try recursiveMkDir(dir);
                     },
                     .file => {
-                        const src = cmd_iter.next() orelse return mistake("file:<src>:<dst> is missing it's <src> path!", .{});
-                        const dst = try normalize(cmd_iter.next() orelse return mistake("file:<src>:<dst> is missing it's <dst> path!", .{}));
+                        const src = cmd_iter.next() orelse return mistake("file;<src>;<dst> is missing it's <src> path!", .{});
+                        const dst = try normalize(cmd_iter.next() orelse return mistake("file;<src>;<dst> is missing it's <dst> path!", .{}));
 
                         // std.log.info("file(\"{}\", \"{}\")", .{ std.zig.fmtEscapes(src), std.zig.fmtEscapes(dst) });
 
@@ -102,10 +102,8 @@ pub fn App(comptime Context: type) type {
                         try addFile(file, dst);
                     },
                     .dir => {
-                        const src = cmd_iter.next() orelse return mistake("dir:<src>:<dst> is missing it's <src> path!", .{});
-                        const dst = try normalize(cmd_iter.next() orelse return mistake("dir:<src>:<dst> is missing it's <dst> path!", .{}));
-
-                        // std.log.info("dir(\"{}\", \"{}\")", .{ std.zig.fmtEscapes(src), std.zig.fmtEscapes(dst) });
+                        const src = cmd_iter.next() orelse return mistake("dir;<src>;<dst> is missing it's <src> path!", .{});
+                        const dst = try normalize(cmd_iter.next() orelse return mistake("dir;<src>;<dst> is missing it's <dst> path!", .{}));
 
                         var iter_dir = try std.fs.cwd().openDir(src, .{ .iterate = true });
                         defer iter_dir.close();
