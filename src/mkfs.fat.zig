@@ -81,7 +81,7 @@ pub fn mkfile(path: []const u8, host_file: std.fs.File) !void {
 
 fn disk_getStatus(intf: *fatfs.Disk) fatfs.Disk.Status {
     _ = intf;
-    return fatfs.Disk.Status{
+    return .{
         .initialized = true,
         .disk_present = true,
         .write_protected = false,
