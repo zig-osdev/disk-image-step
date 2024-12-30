@@ -129,7 +129,7 @@ pub fn build(b: *std.Build) void {
 
     const mkfs_fat = b.addExecutable(.{
         .name = "mkfs.fat",
-        .target = b.host,
+        .target = b.resolveTargetQuery(.{}),
         .optimize = .ReleaseSafe,
         .root_source_file = b.path("src/mkfs.fat.zig"),
     });
@@ -416,7 +416,7 @@ pub const InitializeDiskStep = struct {
                         var buffer: [64]u8 = undefined;
                         context.appendSliceAssumeCapacity(std.fmt.bufPrint(&buffer, "[{}]", .{part_id}) catch unreachable);
 
-                        try writeDiskImage(b, asking, disk, base + auto_offset, part.size, part.data, context);
+                        try writeDiskImage(b, asking, disk, part.offset orelse base + auto_offset, part.size, part.data, context);
 
                         auto_offset += part.size;
                     }
@@ -459,16 +459,16 @@ pub const InitializeDiskStep = struct {
                 for (fs.items) |item| {
                     switch (item) {
                         .empty_dir => |dir| {
-                            try argv.append(b.fmt("mkdir:{s}", .{dir}));
+                            try argv.append(b.fmt("mkdir;{s}", .{dir}));
                         },
                         .copy_dir => |src_dst| {
-                            try argv.append(b.fmt("dir:{s}:{s}", .{
+                            try argv.append(b.fmt("dir;{s};{s}", .{
                                 src_dst.source.getPath2(b, asking),
                                 src_dst.destination,
                             }));
                         },
                         .copy_file => |src_dst| {
-                            try argv.append(b.fmt("file:{s}:{s}", .{
+                            try argv.append(b.fmt("file;{s};{s}", .{
                                 src_dst.source.getPath2(b, asking),
                                 src_dst.destination,
                             }));
@@ -524,9 +524,8 @@ pub const InitializeDiskStep = struct {
         }
     }
 
-    fn make(step: *std.Build.Step, progress: std.Progress.Node) !void {
+    fn make(step: *std.Build.Step, _: std.Build.Step.MakeOptions) !void {
         const b = step.owner;
-        _ = progress;
 
         const ids: *InitializeDiskStep = @fieldParentPtr("step", step);
 
@@ -629,11 +628,10 @@ pub const Content = union(enum) {
                             dir.* = try allocator.dupe(u8, dir.*);
                         },
                         .copy_dir, .copy_file => |*cp| {
-                            const cp_new = .{
+                            cp.* = .{
                                 .destination = try allocator.dupe(u8, cp.destination),
                                 .source = cp.source.dupe(b),
                             };
-                            cp.* = cp_new;
                         },
                     }
                 }
@@ -734,6 +732,8 @@ pub const mbr = struct {
         empty = 0x00,
 
         fat12 = 0x01,
+        fat16_small = 0x04,
+        fat16 = 0x06,
         ntfs = 0x07,
 
         fat32_chs = 0x0B,
