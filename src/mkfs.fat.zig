@@ -12,7 +12,7 @@ pub const std_options: std.Options = .{
     },
 };
 
-var fat_disk: fatfs.Disk = fatfs.Disk{
+var fat_disk: fatfs.Disk = .{
     .getStatusFn = disk_getStatus,
     .initializeFn = disk_initialize,
     .readFn = disk_read,
@@ -81,7 +81,7 @@ pub fn mkfile(path: []const u8, host_file: std.fs.File) !void {
 
 fn disk_getStatus(intf: *fatfs.Disk) fatfs.Disk.Status {
     _ = intf;
-    return fatfs.Disk.Status{
+    return .{
         .initialized = true,
         .disk_present = true,
         .write_protected = false,

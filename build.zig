@@ -138,7 +138,7 @@ pub fn build(b: *std.Build) void {
     b.installArtifact(mkfs_fat);
 
     // Usage:
-    var self_dep = std.Build.Dependency{
+    var self_dep: std.Build.Dependency = .{
         .builder = b,
     };
     usageDemo(b, &self_dep, debug_step);
@@ -175,7 +175,7 @@ fn installDebugDisk(
 pub fn initializeDisk(dependency: *std.Build.Dependency, size: u64, content: Content) *InitializeDiskStep {
     const ids = dependency.builder.allocator.create(InitializeDiskStep) catch @panic("out of memory");
 
-    ids.* = InitializeDiskStep{
+    ids.* = .{
         .step = std.Build.Step.init(.{
             .owner = dependency.builder, // TODO: Is this correct?
             .id = .custom,
@@ -563,7 +563,7 @@ pub const InitializeDiskStep = struct {
             try disk.writeAll("\x00");
             try disk.seekTo(0);
 
-            var context = HumanContext{};
+            var context: HumanContext = .{};
             context.appendSliceAssumeCapacity("disk");
 
             const disk_image = DiskImage{
@@ -943,9 +943,9 @@ pub const FileSystem = struct {
         ///  <ops...> is a list of operations that should be performed on the file system:
         ///  - format            Formats the disk image.
         ///  - mount             Mounts the file system, must be before all following:
-        ///  - mkdir:<dst>       Creates directory <dst> and all necessary parents.
-        ///  - file:<src>:<dst>  Copy <src> to path <dst>. If <dst> exists, it will be overwritten.
-        ///  - dir:<src>:<dst>   Copy <src> recursively into <dst>. If <dst> exists, they will be merged.
+        ///  - mkdir;<dst>       Creates directory <dst> and all necessary parents.
+        ///  - file;<src>;<dst>  Copy <src> to path <dst>. If <dst> exists, it will be overwritten.
+        ///  - dir;<src>;<dst>   Copy <src> recursively into <dst>. If <dst> exists, they will be merged.
         ///
         /// <dst> paths are always rooted, even if they don't start with a /, and always use / as a path separator.
         ///
@@ -986,7 +986,7 @@ pub const FileSystemBuilder = struct {
         format: FileSystem.Format,
         label: []const u8,
     }) FileSystem {
-        return FileSystem{
+        return .{
             .format = options.format,
             .label = fsb.b.dupe(options.label),
             .items = fsb.list.toOwnedSlice(fsb.b.allocator) catch @panic("out of memory"),
