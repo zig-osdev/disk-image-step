@@ -129,7 +129,7 @@ pub fn build(b: *std.Build) void {
 
     const mkfs_fat = b.addExecutable(.{
         .name = "mkfs.fat",
-        .target = b.host,
+        .target = b.graph.host,
         .optimize = .ReleaseSafe,
         .root_source_file = b.path("src/mkfs.fat.zig"),
     });
@@ -524,9 +524,9 @@ pub const InitializeDiskStep = struct {
         }
     }
 
-    fn make(step: *std.Build.Step, progress: std.Progress.Node) !void {
+    fn make(step: *std.Build.Step, options: std.Build.Step.MakeOptions) !void {
         const b = step.owner;
-        _ = progress;
+        _ = options;
 
         const ids: *InitializeDiskStep = @fieldParentPtr("step", step);
 
@@ -629,7 +629,7 @@ pub const Content = union(enum) {
                             dir.* = try allocator.dupe(u8, dir.*);
                         },
                         .copy_dir, .copy_file => |*cp| {
-                            const cp_new = .{
+                            const cp_new: FileSystem.Copy = .{
                                 .destination = try allocator.dupe(u8, cp.destination),
                                 .source = cp.source.dupe(b),
                             };
