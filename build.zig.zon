@@ -3,8 +3,8 @@
     .version = "0.1.0",
     .dependencies = .{
         .zfat = .{
-            .url = "https://github.com/ZigEmbeddedGroup/zfat/archive/68dbbe19258b174fe4f374a91b4cc939019d9fe7.tar.gz",
-            .hash = "1220963601b9bc8dacc422d098368567e5c7b84d21f9ae73067fe3eb9c566aea02fd",
+            .url = "https://github.com/ZigEmbeddedGroup/zfat/archive/3ce06d43a4e04d387034dcae2f486b050701f321.tar.gz",
+            .hash = "12205d874e8c9fd08d93c09ccbfddb045809afcc28e232b36b5abe3d288278ce458f",
         },
     },
     .paths = .{
