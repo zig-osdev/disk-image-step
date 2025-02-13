@@ -180,7 +180,7 @@ pub fn App(comptime Context: type) type {
                     continue;
                 } else if (std.mem.eql(u8, part, "..")) {
                     // "cd up" is basically just removing the last pushed part
-                    _ = list.popOrNull();
+                    _ = list.pop();
                 } else {
                     // this is an actual "descend"
                     try list.append(part);
