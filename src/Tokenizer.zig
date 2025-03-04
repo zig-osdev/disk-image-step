@@ -9,6 +9,9 @@ pub const TokenType = enum {
     /// `\$\w+`
     variable,
 
+    /// `!\w+`
+    directive,
+
     /// `\s+`
     whitespace,
 
@@ -34,21 +37,27 @@ pub fn init(source: []const u8) Tokenizer {
 
 pub const Error = error{
     SourceInputTooLarge,
+    InvalidSourceEncoding,
+    BadEscapeSequence,
+    BadStringLiteral,
 };
 
-pub fn next(tk: *Tokenizer) Error!?Token {
-    if (tk.index >= tk.source.len)
-        return null;
-    if (tk.index >= std.math.maxInt(u32)) {
-        return error.SourceInputTooLarge;
-    }
+pub fn get_text(tk: Tokenizer, token: Token) []const u8 {
+    return tk.source[token.offset..][0..token.len];
+}
 
+pub fn next(tk: *Tokenizer) Error!?Token {
     const start = tk.index;
-    const first = tk.source[start];
+    const first = if (try tk.next_char()) |char|
+        char
+    else
+        return null;
 
     if (std.ascii.isWhitespace(first)) {
-        while (tk.index < tk.source.len and std.ascii.isWhitespace(tk.source[tk.index])) {
-            tk.index += 1;
+        while (try tk.peek_char()) |c| {
+            if (!std.ascii.isWhitespace(c))
+                break;
+            tk.take_char(c);
         }
         return .{
             .offset = @intCast(start),
@@ -56,9 +65,12 @@ pub fn next(tk: *Tokenizer) Error!?Token {
             .type = .whitespace,
         };
     }
+
     if (first == '#') {
-        while (tk.index < tk.source.len and tk.source[tk.index] != '\n') {
-            tk.index += 1;
+        while (try tk.peek_char()) |c| {
+            if (c == '\n')
+                break;
+            tk.take_char(c);
         }
         return .{
             .offset = @intCast(start),
@@ -70,16 +82,20 @@ pub fn next(tk: *Tokenizer) Error!?Token {
     if (first == '"') {
         tk.index += 1;
 
-        while (tk.index < tk.source.len) {
-            const chr = tk.source[tk.index];
-            tk.index += 1;
-
-            if (chr == '"')
+        var string_ok = false;
+        while (try tk.peek_char()) |c| {
+            tk.take_char(c);
+            if (c == '"') {
+                string_ok = true;
                 break;
-
-            if (chr == '\\')
-                tk.index += 1;
+            }
+            if (c == '\\') {
+                if ((try tk.next_char()) == null)
+                    return error.BadEscapeSequence;
+            }
         }
+        if (!string_ok)
+            return error.BadStringLiteral;
 
         return .{
             .offset = @intCast(start),
@@ -92,9 +108,14 @@ pub fn next(tk: *Tokenizer) Error!?Token {
     if (first == '$') {
         tk.index += 1;
         ttype = .variable;
-    }
-    while (tk.index < tk.source.len and !std.ascii.isWhitespace(tk.source[tk.index])) {
+    } else if (first == '!') {
         tk.index += 1;
+        ttype = .directive;
+    }
+    while (try tk.peek_char()) |c| {
+        if (std.ascii.isWhitespace(c))
+            break;
+        tk.take_char(c);
     }
     return .{
         .offset = @intCast(start),
@@ -103,10 +124,40 @@ pub fn next(tk: *Tokenizer) Error!?Token {
     };
 }
 
+fn peek_char(tk: Tokenizer) error{ SourceInputTooLarge, InvalidSourceEncoding }!?u8 {
+    if (tk.index >= tk.source.len)
+        return null;
+
+    if (tk.index >= std.math.maxInt(u32))
+        return error.SourceInputTooLarge;
+
+    const char = tk.source[tk.index];
+    if (char < 0x20 and !std.ascii.isWhitespace(char))
+        return error.InvalidSourceEncoding;
+
+    return char;
+}
+
+fn take_char(tk: *Tokenizer, c: u8) void {
+    std.debug.assert(tk.source[tk.index] == c);
+    tk.index += 1;
+}
+
+fn next_char(tk: *Tokenizer) error{ SourceInputTooLarge, InvalidSourceEncoding }!?u8 {
+    const char = try tk.peek_char();
+    if (char) |c|
+        tk.take_char(c);
+    return char;
+}
+
 fn run_fuzz_test(_: void, input: []const u8) !void {
     var tokenizer = init(input);
 
-    while (try tokenizer.next()) |_| {}
+    while (true) {
+        const tok = tokenizer.next() catch return;
+        if (tok == null)
+            break;
+    }
 }
 
 test "fuzz Tokenizer" {
@@ -139,6 +190,7 @@ test Tokenizer {
             std.zig.fmtId(@tagName(actual.type)),
             std.zig.fmtEscapes(tokenizer.source[actual.offset..][0..actual.len]),
         });
+        try std.testing.expectEqualStrings(expected.@"1", tokenizer.get_text(actual));
         try std.testing.expectEqual(offset, actual.offset);
         try std.testing.expectEqual(expected.@"0", actual.type);
         try std.testing.expectEqual(expected.@"1".len, actual.len);

@@ -3,7 +3,8 @@
 //!
 const std = @import("std");
 
-const Tokenizer = @import("tokenizer.zig");
+const Tokenizer = @import("Tokenizer.zig");
+const Parser = @import("Parser.zig");
 
 pub fn main() !void {
 
@@ -13,4 +14,5 @@ pub fn main() !void {
 
 test {
     _ = Tokenizer;
+    _ = Parser;
 }

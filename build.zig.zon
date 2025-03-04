@@ -1,6 +1,6 @@
 .{
     .name = .disk_image_step,
-    .version = "0.1.0",
+    .version = "2.0.0",
     .fingerprint = 0xdaabde74a06664f7,
     .dependencies = .{
         .zfat = .{

@@ -9,7 +9,7 @@ mbr-part
         label AshetOS
         add-dir ../../rootfs .
         add-dir $PATH2 .
-        apps/hello-world.ashex
+        copy-file $PATH3 apps/hello-world.ashex
         copy-file $PATH3 apps/hello-gui.ashex
         copy-file $PATH4 apps/clock.ashex
         copy-file $PATH5 apps/paint.ashex
