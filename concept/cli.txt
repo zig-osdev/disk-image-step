@@ -1,0 +1,8 @@
+dim \
+  --output zig-cache/disk.img \
+  --size 64M \
+  --script zig-cache/script.dis \
+  PATH1=vendor/syslinux-6.03/…/mbr.bin \
+  PATH2=… \
+  PATH3=… \
+  PATH4=…

@@ -1,0 +1,31 @@
+mbr-part
+  bootloader $PATH1
+  part # partition 1
+    type fat32-lba
+    size 500M
+    bootable
+    contents
+      fat fat32
+        label AshetOS
+        add-dir ../../rootfs .
+        add-dir $PATH2 .
+        apps/hello-world.ashex
+        copy-file $PATH3 apps/hello-gui.ashex
+        copy-file $PATH4 apps/clock.ashex
+        copy-file $PATH5 apps/paint.ashex
+        copy-file $PATH6 apps/init.ashex
+        copy-file $PATH7 apps/testing
+        copy-file $PATH8 apps/desktop
+        copy-file $PATH9 apps/testing/behaviour.ashex
+        copy-file $PATH10 apps/desktop/classic.ashex
+        copy-file $PATH11 ashet-os
+        copy-file ../../rootfs-x86/syslinux/modules.alias syslinux/modules.alias
+        copy-file ../../rootfs-x86/syslinux/pci.ids syslinux/pci.ids
+        copy-file ../../rootfs-x86/syslinux/syslinux.cfg syslinux/syslinux.cfg
+        copy-file $PATH12 syslinux/libmenu.c32
+        …
+      endfat
+  endpart
+  ignore # partition 2
+  ignore # partition 3
+  ignore # partition 4
