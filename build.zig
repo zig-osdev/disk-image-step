@@ -30,11 +30,15 @@ pub fn build(b: *std.Build) void {
     // mkfs_fat.linkLibC();
     // b.installArtifact(mkfs_fat);
 
+    const args_dep = b.dependency("args", .{});
+    const args_mod = args_dep.module("args");
+
     const dim_mod = b.addModule("dim", .{
         .root_source_file = b.path("src/dim.zig"),
         .target = target,
         .optimize = optimize,
     });
+    dim_mod.addImport("args", args_mod);
 
     const dim_exe = b.addExecutable(.{
         .name = "dim",
