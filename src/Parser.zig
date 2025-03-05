@@ -38,7 +38,7 @@ const File = struct {
 };
 
 allocator: std.mem.Allocator,
-io: IO,
+io: *const IO,
 
 file_stack: []File,
 max_include_depth: usize,
@@ -46,7 +46,7 @@ max_include_depth: usize,
 pub const InitOptions = struct {
     max_include_depth: usize,
 };
-pub fn init(allocator: std.mem.Allocator, io: IO, options: InitOptions) error{OutOfMemory}!Parser {
+pub fn init(allocator: std.mem.Allocator, io: *const IO, options: InitOptions) error{OutOfMemory}!Parser {
     var slice = try allocator.alloc(File, options.max_include_depth);
     slice.len = 0;
     return .{
@@ -88,23 +88,7 @@ pub fn push_source(parser: *Parser, options: struct {
 }
 
 pub fn push_file(parser: *Parser, include_path: []const u8) !void {
-    std.debug.assert(parser.file_stack.len <= parser.max_include_depth);
-    if (parser.file_stack.len == parser.max_include_depth)
-        return error.MaxIncludeDepthReached;
-
-    const top_path = if (parser.file_stack.len > 0)
-        parser.file_stack[parser.file_stack.len - 1].path
-    else
-        "";
-
-    const abs_include_path = try std.fs.path.resolvePosix(
-        parser.allocator,
-        &.{
-            std.fs.path.dirnamePosix(top_path) orelse ".",
-            include_path,
-        },
-    );
-    errdefer parser.allocator.free(abs_include_path);
+    const abs_include_path = try parser.get_include_path(parser.allocator, include_path);
 
     const file_contents = try parser.io.fetch_file(parser.allocator, abs_include_path);
     errdefer parser.allocator.free(file_contents);
@@ -119,7 +103,36 @@ pub fn push_file(parser: *Parser, include_path: []const u8) !void {
     };
 }
 
-pub fn next(parser: *Parser) Error!?[]const u8 {
+pub fn get_include_path(parser: Parser, allocator: std.mem.Allocator, rel_include_path: []const u8) ![]const u8 {
+    std.debug.assert(parser.file_stack.len <= parser.max_include_depth);
+    if (parser.file_stack.len == parser.max_include_depth)
+        return error.MaxIncludeDepthReached;
+
+    const top_path = if (parser.file_stack.len > 0)
+        parser.file_stack[parser.file_stack.len - 1].path
+    else
+        "";
+
+    const abs_include_path = try std.fs.path.resolvePosix(
+        allocator,
+        &.{
+            std.fs.path.dirnamePosix(top_path) orelse ".",
+            rel_include_path,
+        },
+    );
+    errdefer allocator.free(abs_include_path);
+
+    return abs_include_path;
+}
+
+pub fn next(parser: *Parser) (Error || error{UnexpectedEndOfFile})![]const u8 {
+    return if (try parser.next_or_eof()) |word|
+        word
+    else
+        error.UnexpectedEndOfFile;
+}
+
+pub fn next_or_eof(parser: *Parser) Error!?[]const u8 {
     if (parser.file_stack.len == 0)
         return null;
 
@@ -206,7 +219,7 @@ test Parser {
         .resolve_variable_fn = undefined,
     };
 
-    var parser: Parser = try .init(std.testing.allocator, io, .{
+    var parser: Parser = try .init(std.testing.allocator, &io, .{
         .max_include_depth = 8,
     });
     defer parser.deinit();
@@ -241,10 +254,10 @@ test Parser {
     };
 
     for (sequence) |item| {
-        try std.testing.expectEqualStrings(item, (try parser.next()).?);
+        try std.testing.expectEqualStrings(item, (try parser.next_or_eof()).?);
     }
 
-    try std.testing.expectEqual(null, parser.next());
+    try std.testing.expectEqual(null, parser.next_or_eof());
 }
 
 test "parser with variables" {
@@ -263,7 +276,7 @@ test "parser with variables" {
         .resolve_variable_fn = MyIO.resolve_variable,
     };
 
-    var parser: Parser = try .init(std.testing.allocator, io, .{
+    var parser: Parser = try .init(std.testing.allocator, &io, .{
         .max_include_depth = 8,
     });
     defer parser.deinit();
@@ -286,10 +299,10 @@ test "parser with variables" {
     };
 
     for (sequence) |item| {
-        try std.testing.expectEqualStrings(item, (try parser.next()).?);
+        try std.testing.expectEqualStrings(item, (try parser.next_or_eof()).?);
     }
 
-    try std.testing.expectEqual(null, parser.next());
+    try std.testing.expectEqual(null, parser.next_or_eof());
 }
 
 test "parser with variables and include files" {
@@ -314,7 +327,7 @@ test "parser with variables and include files" {
         .resolve_variable_fn = MyIO.resolve_variable,
     };
 
-    var parser: Parser = try .init(std.testing.allocator, io, .{
+    var parser: Parser = try .init(std.testing.allocator, &io, .{
         .max_include_depth = 8,
     });
     defer parser.deinit();
@@ -337,10 +350,10 @@ test "parser with variables and include files" {
     };
 
     for (sequence) |item| {
-        try std.testing.expectEqualStrings(item, (try parser.next()).?);
+        try std.testing.expectEqualStrings(item, (try parser.next_or_eof()).?);
     }
 
-    try std.testing.expectEqual(null, parser.next());
+    try std.testing.expectEqual(null, parser.next_or_eof());
 }
 
 test "parse nothing" {
@@ -349,12 +362,12 @@ test "parse nothing" {
         .resolve_variable_fn = undefined,
     };
 
-    var parser: Parser = try .init(std.testing.allocator, io, .{
+    var parser: Parser = try .init(std.testing.allocator, &io, .{
         .max_include_depth = 8,
     });
     defer parser.deinit();
 
-    try std.testing.expectEqual(null, parser.next());
+    try std.testing.expectEqual(null, parser.next_or_eof());
 }
 
 fn fuzz_parser(_: void, input: []const u8) !void {
@@ -376,7 +389,7 @@ fn fuzz_parser(_: void, input: []const u8) !void {
         .resolve_variable_fn = FuzzIO.resolve_variable,
     };
 
-    var parser: Parser = try .init(std.testing.allocator, io, .{
+    var parser: Parser = try .init(std.testing.allocator, &io, .{
         .max_include_depth = 8,
     });
     defer parser.deinit();
@@ -387,7 +400,7 @@ fn fuzz_parser(_: void, input: []const u8) !void {
     });
 
     while (true) {
-        const res = parser.next() catch |err| switch (err) {
+        const res = parser.next_or_eof() catch |err| switch (err) {
             error.UnknownDirective,
             error.UnknownVariable,
             error.BadDirective,
