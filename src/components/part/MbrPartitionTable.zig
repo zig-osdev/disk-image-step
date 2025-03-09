@@ -50,7 +50,7 @@ pub fn parse(ctx: dim.Context) !dim.Content {
         }
     }
 
-    return .create_handle(pf, .create(@This(), .{
+    return .create_handle(pf, .create(PartTable, .{
         .guess_size_fn = guess_size,
         .render_fn = render,
     }));
@@ -74,19 +74,20 @@ fn parse_partition(ctx: dim.Context) !Partition {
     parse_loop: while (true) {
         const kw = try ctx.parse_enum(enum {
             type,
-            size,
             bootable,
+            size,
+            offset,
             contents,
             endpart,
         });
-        switch (kw) {
+        try switch (kw) {
             .type => updater.set(.type, try ctx.parse_enum(PartitionType)),
             .bootable => updater.set(.bootable, true),
             .size => updater.set(.size, try ctx.parse_mem_size()),
             .offset => updater.set(.offset, try ctx.parse_mem_size()),
-            .contents => updater.set(.contents, try ctx.parse_content()),
+            .contents => updater.set(.data, try ctx.parse_content()),
             .endpart => break :parse_loop,
-        }
+        };
     }
 
     try updater.validate();

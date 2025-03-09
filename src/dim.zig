@@ -255,7 +255,7 @@ pub fn FieldUpdater(comptime Obj: type, comptime optional_fields: []const std.me
 
         pub fn set(fup: *FUP, comptime field: FieldName, value: @FieldType(Obj, @tagName(field))) !void {
             if (fup.updated_fields.contains(field)) {
-                fup.ctx.report_nonfatal_error("duplicate assignment of {s}.{s}", .{
+                try fup.ctx.report_nonfatal_error("duplicate assignment of {s}.{s}", .{
                     @typeName(Obj),
                     @tagName(field),
                 });
@@ -273,7 +273,7 @@ pub fn FieldUpdater(comptime Obj: type, comptime optional_fields: []const std.me
             missing_fields = missing_fields.complement();
             var iter = missing_fields.iterator();
             while (iter.next()) |fld| {
-                fup.ctx.report_nonfatal_error("missing assignment of {s}.{s}", .{
+                try fup.ctx.report_nonfatal_error("missing assignment of {s}.{s}", .{
                     @typeName(Obj),
                     @tagName(fld),
                 });
@@ -290,6 +290,8 @@ const Environment = struct {
         UnknownContentType,
         FatalConfigError,
         InvalidEnumTag,
+        Overflow,
+        InvalidSize,
     };
 
     arena: std.mem.Allocator,
@@ -341,6 +343,24 @@ pub const Content = struct {
     obj: *anyopaque,
     vtable: *const VTable,
 
+    pub const empty: Content = .{
+        .obj = undefined,
+        .vtable = &emptyVTable,
+    };
+
+    const emptyVTable: VTable = blk: {
+        const Wrap = struct {
+            fn render(_: *anyopaque, _: *BinaryStream) RenderError!void {}
+            fn guess_size_fn(_: *anyopaque) GuessError!SizeGuess {
+                return .{ .exact = 0 };
+            }
+        };
+        break :blk .{
+            .render_fn = Wrap.render,
+            .guess_size_fn = Wrap.guess_size_fn,
+        };
+    };
+
     pub fn create_handle(obj: *anyopaque, vtable: *const VTable) Content {
         return .{ .obj = obj, .vtable = vtable };
     }
@@ -361,10 +381,13 @@ pub const Content = struct {
         render_fn: *const fn (*anyopaque, *BinaryStream) RenderError!void,
         guess_size_fn: *const fn (*anyopaque) GuessError!SizeGuess,
 
-        pub fn create(comptime Container: type, comptime funcs: struct {
-            render_fn: *const fn (*Container, *BinaryStream) RenderError!void,
-            guess_size_fn: *const fn (*Container) GuessError!SizeGuess,
-        }) *const VTable {
+        pub fn create(
+            comptime Container: type,
+            comptime funcs: struct {
+                render_fn: *const fn (*Container, *BinaryStream) RenderError!void,
+                guess_size_fn: *const fn (*Container) GuessError!SizeGuess,
+            },
+        ) *const VTable {
             const Wrap = struct {
                 fn render(self: *anyopaque, stream: *BinaryStream) RenderError!void {
                     return funcs.render_fn(
