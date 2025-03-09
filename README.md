@@ -32,14 +32,14 @@ The *Fill* type will fill the remaining size in its space with the given `<byte>
 fill <byte>
 ```
 
-### Raw Binary Content (`raw`)
+### Paste File Contents (`paste-file`)
 
 The *Raw* type will include the file at `<path>` verbatim and will error, if not enough space is available.
 
 `<path>` is relative to the current file.
 
 ```plain
-raw <path>
+paste-file <path>
 ```
 
 ### MBR Partition Table (`mbr-part`)

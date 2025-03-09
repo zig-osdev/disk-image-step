@@ -5,10 +5,28 @@
 const std = @import("std");
 const dim = @import("../dim.zig");
 
-pub fn execute(ctx: dim.Context) !void {
-    const fill_value: u8 = try ctx.get_integer(u8, 0);
+const FillData = @This();
 
-    if (ctx.get_remaining_size()) |size| {
-        try ctx.writer().writeByteNTimes(fill_value, size);
-    }
+fill_value: u8,
+
+pub fn parse(ctx: dim.Context) !dim.Content {
+    const pf = try ctx.alloc_object(FillData);
+    pf.* = .{
+        .fill_value = try ctx.parse_integer(u8, 0),
+    };
+    return .create_handle(pf, .create(@This(), .{
+        .guess_size_fn = guess_size,
+        .render_fn = render,
+    }));
+}
+
+fn guess_size(_: *FillData) dim.Content.GuessError!dim.SizeGuess {
+    return .{ .at_least = 0 };
+}
+
+fn render(self: *FillData, stream: *dim.BinaryStream) dim.Content.RenderError!void {
+    try stream.writer().writeByteNTimes(
+        self.fill_value,
+        stream.capacity,
+    );
 }

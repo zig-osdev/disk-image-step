@@ -85,11 +85,12 @@ pub fn main() !u8 {
     const script_source = try current_dir.readFileAlloc(gpa, script_path, max_script_size);
     defer gpa.free(script_source);
 
-    var output_file = try current_dir.atomicFile(output_path, .{});
-    defer output_file.deinit();
+    var mem_arena: std.heap.ArenaAllocator = .init(gpa);
+    defer mem_arena.deinit();
 
     var env = Environment{
         .allocator = gpa,
+        .arena = mem_arena.allocator(),
         .vars = &var_map,
         .include_base = current_dir,
         .parser = undefined,
@@ -111,9 +112,34 @@ pub fn main() !u8 {
         .contents = script_source,
     });
 
-    try env.execute_content(&parser);
+    const root_content: Content = env.parse_content() catch |err| switch (err) {
+        error.FatalConfigError => return 1,
 
-    try output_file.finish();
+        else => |e| return e,
+    };
+
+    if (env.error_flag) {
+        return 1;
+    }
+
+    {
+        var output_file = try current_dir.atomicFile(output_path, .{});
+        defer output_file.deinit();
+
+        const size_limit: ?u64 = if (options.size) |disk_size| blk: {
+            try output_file.file.setEndPos(disk_size.size_in_bytes());
+
+            break :blk disk_size.size_in_bytes();
+        } else null;
+
+        var stream = BinaryStream{
+            .capacity = size_limit orelse 0,
+        };
+
+        try root_content.render(&stream);
+
+        try output_file.finish();
+    }
 
     return 0;
 }
@@ -126,9 +152,9 @@ fn fatal(msg: []const u8) noreturn {
 
 const content_types: []const struct { []const u8, type } = &.{
     .{ "mbr-part", @import("components/part/MbrPartitionTable.zig") },
-    .{ "gpt-part", @import("components/part/GptPartitionTable.zig") },
-    .{ "fat", @import("components/fs/FatFileSystem.zig") },
-    .{ "raw", @import("components/RawData.zig") },
+    // .{ "gpt-part", @import("components/part/GptPartitionTable.zig") },
+    // .{ "fat", @import("components/fs/FatFileSystem.zig") },
+    .{ "paste-file", @import("components/PasteFile.zig") },
     .{ "empty", @import("components/EmptyData.zig") },
     .{ "fill", @import("components/FillData.zig") },
 };
@@ -136,79 +162,157 @@ const content_types: []const struct { []const u8, type } = &.{
 pub const Context = struct {
     env: *Environment,
 
-    pub const WriteError = error{};
-    pub const Writer = std.io.Writer(*const Context, WriteError, write_some_data);
-
-    pub fn get_remaining_size(ctx: Context) ?u64 {
-        _ = ctx;
-
-        // TODO: This
-        return null;
+    pub fn alloc_object(ctx: Context, comptime T: type) error{OutOfMemory}!*T {
+        return try ctx.env.arena.create(T);
     }
 
-    pub fn open_file(ctx: Context, path: []const u8) !std.fs.File {
-        const abs_path = try ctx.env.parser.get_include_path(ctx.env.allocator, path);
-        defer ctx.env.allocator.free(abs_path);
-
-        return ctx.env.include_base.openFile(abs_path, .{});
+    pub fn report_nonfatal_error(ctx: Context, comptime msg: []const u8, params: anytype) error{OutOfMemory}!void {
+        try ctx.env.report_error(msg, params);
     }
 
-    pub fn writer(ctx: *const Context) Writer {
-        return .{ .context = ctx };
+    pub fn report_fatal_error(ctx: Context, comptime msg: []const u8, params: anytype) error{ FatalConfigError, OutOfMemory } {
+        try ctx.env.report_error(msg, params);
+        return error.FatalConfigError;
     }
 
-    pub fn get_string(ctx: Context) ![]const u8 {
+    pub fn parse_string(ctx: Context) Environment.ParseError![]const u8 {
         return ctx.env.parser.next();
     }
 
-    pub fn get_enum(ctx: Context, comptime E: type) !E {
+    pub fn parse_file_name(ctx: Context) Environment.ParseError!FileName {
+        const rel_path = try ctx.parse_string();
+
+        const abs_path = try ctx.env.parser.get_include_path(ctx.env.arena, rel_path);
+
+        return .{
+            .root_dir = ctx.env.include_base,
+            .rel_path = abs_path,
+        };
+    }
+
+    pub fn parse_enum(ctx: Context, comptime E: type) Environment.ParseError!E {
         if (@typeInfo(E) != .@"enum")
             @compileError("get_enum requires an enum type!");
         return std.meta.stringToEnum(
             E,
-            ctx.get_string(),
+            try ctx.parse_string(),
         ) orelse return error.InvalidEnumTag;
     }
 
-    pub fn get_integer(ctx: Context, comptime I: type, base: u8) !I {
+    pub fn parse_integer(ctx: Context, comptime I: type, base: u8) Environment.ParseError!I {
         if (@typeInfo(I) != .int)
             @compileError("get_integer requires an integer type!");
-        return try std.fmt.parseInt(
+        return std.fmt.parseInt(
             I,
-            try ctx.get_string(),
+            try ctx.parse_string(),
             base,
-        );
+        ) catch return error.InvalidNumber;
     }
 
-    fn write_some_data(ctx: *const Context, buffer: []const u8) WriteError!usize {
-        _ = ctx;
-        // TODO: Implement this!
-        return buffer.len;
+    pub fn parse_mem_size(ctx: Context) Environment.ParseError!u64 {
+        const str = try ctx.parse_string();
+
+        const ds: DiskSize = try .parse(str);
+
+        return ds.size_in_bytes();
+    }
+
+    pub fn parse_content(ctx: Context) Environment.ParseError!Content {
+        const content_type_str = try ctx.env.parser.next();
+
+        inline for (content_types) |tn| {
+            const name, const impl = tn;
+
+            if (std.mem.eql(u8, name, content_type_str)) {
+                const content: Content = try impl.parse(ctx);
+
+                return content;
+            }
+        }
+
+        return ctx.report_fatal_error("unknown content type: '{}'", .{
+            std.zig.fmtEscapes(content_type_str),
+        });
     }
 };
 
+pub fn FieldUpdater(comptime Obj: type, comptime optional_fields: []const std.meta.FieldEnum(Obj)) type {
+    return struct {
+        const FUP = @This();
+        const FieldName = std.meta.FieldEnum(Obj);
+
+        ctx: Context,
+        target: *Obj,
+
+        updated_fields: std.EnumSet(FieldName) = .initEmpty(),
+
+        pub fn init(ctx: Context, target: *Obj) FUP {
+            return .{
+                .ctx = ctx,
+                .target = target,
+            };
+        }
+
+        pub fn set(fup: *FUP, comptime field: FieldName, value: @FieldType(Obj, @tagName(field))) !void {
+            if (fup.updated_fields.contains(field)) {
+                fup.ctx.report_nonfatal_error("duplicate assignment of {s}.{s}", .{
+                    @typeName(Obj),
+                    @tagName(field),
+                });
+            }
+
+            @field(fup.target, @tagName(field)) = value;
+            fup.updated_fields.insert(field);
+        }
+
+        pub fn validate(fup: FUP) !void {
+            var missing_fields = fup.updated_fields;
+            for (optional_fields) |fld| {
+                missing_fields.insert(fld);
+            }
+            missing_fields = missing_fields.complement();
+            var iter = missing_fields.iterator();
+            while (iter.next()) |fld| {
+                fup.ctx.report_nonfatal_error("missing assignment of {s}.{s}", .{
+                    @typeName(Obj),
+                    @tagName(fld),
+                });
+            }
+        }
+    };
+}
+
 const Environment = struct {
+    const ParseError = Parser.Error || error{
+        OutOfMemory,
+        UnexpectedEndOfFile,
+        InvalidNumber,
+        UnknownContentType,
+        FatalConfigError,
+        InvalidEnumTag,
+    };
+
+    arena: std.mem.Allocator,
     allocator: std.mem.Allocator,
     parser: *Parser,
     include_base: std.fs.Dir,
     vars: *const VariableMap,
+    error_flag: bool = false,
 
     io: Parser.IO = .{
         .fetch_file_fn = fetch_file,
         .resolve_variable_fn = resolve_var,
     },
 
-    fn execute_content(env: *Environment, parser: *Parser) !void {
-        const content_type_str = try parser.next();
+    fn parse_content(env: *Environment) ParseError!Content {
+        var ctx = Context{ .env = env };
 
-        inline for (content_types) |tn| {
-            const name, const impl = tn;
+        return try ctx.parse_content();
+    }
 
-            if (std.mem.eql(u8, name, content_type_str)) {
-                return impl.execute(Context{ .env = env });
-            }
-        }
-        return error.UnknownContentType;
+    fn report_error(env: *Environment, comptime fmt: []const u8, params: anytype) error{OutOfMemory}!void {
+        env.error_flag = true;
+        std.log.err("PARSE ERROR: " ++ fmt, params);
     }
 
     fn fetch_file(io: *const Parser.IO, allocator: std.mem.Allocator, path: []const u8) error{ FileNotFound, IoError, OutOfMemory }![]const u8 {
@@ -223,6 +327,221 @@ const Environment = struct {
     fn resolve_var(io: *const Parser.IO, name: []const u8) error{UnknownVariable}![]const u8 {
         const env: *const Environment = @fieldParentPtr("io", io);
         return env.vars.get(name) orelse return error.UnknownVariable;
+    }
+};
+
+/// A "Content" is something that will fill a given space of a disk image.
+/// It can be raw data, a pattern, a file system, a partition table, ...
+///
+///
+pub const Content = struct {
+    pub const RenderError = FileName.OpenError || FileHandle.ReadError || error{WriteError};
+    pub const GuessError = FileName.GetSizeError;
+
+    obj: *anyopaque,
+    vtable: *const VTable,
+
+    pub fn create_handle(obj: *anyopaque, vtable: *const VTable) Content {
+        return .{ .obj = obj, .vtable = vtable };
+    }
+
+    /// Emits the content into a binary stream.
+    pub fn render(content: Content, stream: *BinaryStream) RenderError!void {
+        try content.vtable.render_fn(content.obj, stream);
+    }
+
+    /// Attempts to determine the required size of the content.
+    ///
+    /// This may not be an exact guess, so the result can have
+    pub fn guess_required_size(content: Content) GuessError!SizeGuess {
+        return try content.vtable.guess_size_fn(content.obj);
+    }
+
+    pub const VTable = struct {
+        render_fn: *const fn (*anyopaque, *BinaryStream) RenderError!void,
+        guess_size_fn: *const fn (*anyopaque) GuessError!SizeGuess,
+
+        pub fn create(comptime Container: type, comptime funcs: struct {
+            render_fn: *const fn (*Container, *BinaryStream) RenderError!void,
+            guess_size_fn: *const fn (*Container) GuessError!SizeGuess,
+        }) *const VTable {
+            const Wrap = struct {
+                fn render(self: *anyopaque, stream: *BinaryStream) RenderError!void {
+                    return funcs.render_fn(
+                        @ptrCast(@alignCast(self)),
+                        stream,
+                    );
+                }
+                fn guess_size(self: *anyopaque) GuessError!SizeGuess {
+                    return funcs.guess_size_fn(
+                        @ptrCast(@alignCast(self)),
+                    );
+                }
+            };
+            return comptime &.{
+                .render_fn = Wrap.render,
+                .guess_size_fn = Wrap.guess_size,
+            };
+        }
+    };
+};
+
+pub const FileName = struct {
+    root_dir: std.fs.Dir,
+    rel_path: []const u8,
+
+    pub const OpenError = error{ FileNotFound, InvalidPath, IoError };
+
+    pub fn open(name: FileName) OpenError!FileHandle {
+        const file = name.root_dir.openFile(name.rel_path, .{}) catch |err| switch (err) {
+            error.FileNotFound => return error.FileNotFound,
+
+            error.NameTooLong,
+            error.InvalidWtf8,
+            error.BadPathName,
+            error.InvalidUtf8,
+            => return error.InvalidPath,
+
+            error.NoSpaceLeft,
+            error.FileTooBig,
+            error.DeviceBusy,
+            error.AccessDenied,
+            error.SystemResources,
+            error.WouldBlock,
+            error.NoDevice,
+            error.Unexpected,
+            error.SharingViolation,
+            error.PathAlreadyExists,
+            error.PipeBusy,
+            error.NetworkNotFound,
+            error.AntivirusInterference,
+            error.SymLinkLoop,
+            error.ProcessFdQuotaExceeded,
+            error.SystemFdQuotaExceeded,
+            error.IsDir,
+            error.NotDir,
+            error.FileLocksNotSupported,
+            error.FileBusy,
+            => return error.IoError,
+        };
+        return .{ .file = file };
+    }
+
+    pub const GetSizeError = error{ FileNotFound, InvalidPath, IoError };
+    pub fn get_size(name: FileName) GetSizeError!u64 {
+        const stat = name.root_dir.statFile(name.rel_path) catch |err| switch (err) {
+            error.FileNotFound => return error.FileNotFound,
+
+            error.NameTooLong,
+            error.InvalidWtf8,
+            error.BadPathName,
+            error.InvalidUtf8,
+            => return error.InvalidPath,
+
+            error.NoSpaceLeft,
+            error.FileTooBig,
+            error.DeviceBusy,
+            error.AccessDenied,
+            error.SystemResources,
+            error.WouldBlock,
+            error.NoDevice,
+            error.Unexpected,
+            error.SharingViolation,
+            error.PathAlreadyExists,
+            error.PipeBusy,
+
+            error.NetworkNotFound,
+            error.AntivirusInterference,
+            error.SymLinkLoop,
+            error.ProcessFdQuotaExceeded,
+            error.SystemFdQuotaExceeded,
+            error.IsDir,
+            error.NotDir,
+            error.FileLocksNotSupported,
+            error.FileBusy,
+            => return error.IoError,
+        };
+        return stat.size;
+    }
+
+    pub fn copy_to(file: FileName, stream: *BinaryStream) (OpenError || FileHandle.ReadError || BinaryStream.WriteError)!void {
+        var handle = try file.open();
+        defer handle.close();
+
+        var fifo: std.fifo.LinearFifo(u8, .{ .Static = 8192 }) = .init();
+
+        try fifo.pump(
+            handle.reader(),
+            stream.writer(),
+        );
+    }
+};
+
+pub const FileHandle = struct {
+    pub const ReadError = error{ReadFileFailed};
+
+    pub const Reader = std.io.Reader(std.fs.File, ReadError, read_some);
+
+    file: std.fs.File,
+
+    pub fn close(fd: *FileHandle) void {
+        fd.file.close();
+        fd.* = undefined;
+    }
+
+    pub fn reader(fd: FileHandle) Reader {
+        return .{ .context = fd.file };
+    }
+
+    fn read_some(file: std.fs.File, data: []u8) ReadError!usize {
+        return file.read(data) catch |err| switch (err) {
+            error.InputOutput,
+            error.AccessDenied,
+            error.BrokenPipe,
+            error.SystemResources,
+            error.OperationAborted,
+            error.LockViolation,
+            error.WouldBlock,
+            error.ConnectionResetByPeer,
+            error.ProcessNotFound,
+            error.Unexpected,
+            error.IsDir,
+            error.ConnectionTimedOut,
+            error.NotOpenForReading,
+            error.SocketNotConnected,
+            error.Canceled,
+            => return error.ReadFileFailed,
+        };
+    }
+};
+
+pub const SizeGuess = union(enum) {
+    unknown,
+    exact: u64,
+    at_least: u64,
+    at_most: u64,
+};
+
+pub const BinaryStream = struct {
+    pub const WriteError = error{IoError};
+    pub const Writer = std.io.Writer(*BinaryStream, WriteError, write_some);
+
+    /// Max number of bytes that can be written
+    capacity: u64,
+
+    pub fn writer(bs: *BinaryStream) Writer {
+        return .{ .context = bs };
+    }
+
+    fn write_some(stream: *BinaryStream, data: []const u8) WriteError!usize {
+        _ = stream;
+        // TODO: Implement write_some!
+
+        // std.debug.print("dummy write of '{}'\n", .{
+        //     std.fmt.fmtSliceHexUpper(data),
+        // });
+
+        return data.len;
     }
 };
 

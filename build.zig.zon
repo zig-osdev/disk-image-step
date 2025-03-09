@@ -5,7 +5,7 @@
     .dependencies = .{
         .zfat = .{
             .url = "https://github.com/ZigEmbeddedGroup/zfat/archive/3ce06d43a4e04d387034dcae2f486b050701f321.tar.gz",
-            .hash = "12205d874e8c9fd08d93c09ccbfddb045809afcc28e232b36b5abe3d288278ce458f",
+            .hash = "zfat-0.0.0-AAAAAMYlcABdh06Mn9CNk8Ccy_3bBFgJr8wo4jKza1q-",
         },
         .args = .{
             .url = "git+https://github.com/ikskuh/zig-args.git#9425b94c103a031777fdd272c555ce93a7dea581",

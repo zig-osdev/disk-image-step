@@ -1,1 +1,1 @@
-raw ./raw.dis
+paste-file ./raw.dis

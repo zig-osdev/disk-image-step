@@ -19,11 +19,9 @@ behaviour-tests: \
     (behaviour-test "tests/basic/raw.dis") \
     (behaviour-test "tests/part/mbr/minimal.dis")
 
-behaviour-test script:
-    {{zig}} build install
-    
+behaviour-test script: install
     ./zig-out/bin/dim --output .zig-cache/disk.img --script "{{script}}" 
-    ./zig-out/bin/dim --output .zig-cache/disk.img --size 30M --script "{{script}}" 
+    ./zig-out/bin/dim --output .zig-cache/disk.img --script "{{script}}" --size 30M
 
 
 fuzz:

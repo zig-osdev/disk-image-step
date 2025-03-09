@@ -1,5 +1,5 @@
 mbr-part
-  bootloader $PATH1
+  bootloader paste-file $PATH1
   part # partition 1
     type fat32-lba
     size 500M
