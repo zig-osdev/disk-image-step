@@ -22,6 +22,6 @@ jobs:
         run: |
           zig build
 
-      - name: Compile and run demo
+      - name: Compile and run tests
         run: |
-          zig build install debug
+          zig build test
