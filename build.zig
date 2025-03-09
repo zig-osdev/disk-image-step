@@ -51,4 +51,37 @@ pub fn build(b: *std.Build) void {
     });
     const run_dim_tests = b.addRunArtifact(dim_tests);
     test_step.dependOn(&run_dim_tests.step);
+
+    const behaviour_tests_step = b.step("behaviour", "Run all behaviour tests");
+    for (behaviour_tests) |script| {
+        const step_name = b.dupe(script);
+        std.mem.replaceScalar(u8, step_name, '/', '-');
+        const script_test = b.step(step_name, b.fmt("Run {s} behaviour test", .{script}));
+
+        const run_sizeless = b.addRunArtifact(dim_exe);
+        run_sizeless.addArg("--output");
+        _ = run_sizeless.addOutputFileArg("disk.img");
+        run_sizeless.addArg("--script");
+        run_sizeless.addFileArg(b.path(script));
+        script_test.dependOn(&run_sizeless.step);
+
+        const run_with_size = b.addRunArtifact(dim_exe);
+        run_with_size.addArg("--output");
+        _ = run_with_size.addOutputFileArg("disk.img");
+        run_with_size.addArg("--script");
+        run_with_size.addFileArg(b.path(script));
+        run_with_size.addArgs(&.{ "--size", "30M" });
+        script_test.dependOn(&run_with_size.step);
+
+        behaviour_tests_step.dependOn(script_test);
+    }
 }
+
+const behaviour_tests: []const []const u8 = &.{
+    "tests/basic/empty.dis",
+    "tests/basic/fill-0x00.dis",
+    "tests/basic/fill-0xAA.dis",
+    "tests/basic/fill-0xFF.dis",
+    "tests/basic/raw.dis",
+    "tests/part/mbr/minimal.dis",
+};
