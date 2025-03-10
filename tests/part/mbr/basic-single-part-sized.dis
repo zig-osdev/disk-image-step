@@ -1,0 +1,9 @@
+mbr-part
+  part
+    type empty
+    contains fill 0xAA
+    size 10M
+  endpart
+  ignore # partition 2
+  ignore # partition 3
+  ignore # partition 4

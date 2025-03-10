@@ -17,7 +17,10 @@ behaviour-tests: \
     (behaviour-test "tests/basic/fill-0xAA.dis") \
     (behaviour-test "tests/basic/fill-0xFF.dis") \
     (behaviour-test "tests/basic/raw.dis") \
-    (behaviour-test "tests/part/mbr/minimal.dis")
+    (behaviour-test "tests/part/mbr/minimal.dis") \
+    (behaviour-test "tests/part/mbr/no-part-bootloader.dis") \
+    (behaviour-test "tests/part/mbr/basic-single-part-sized.dis") \
+    (behaviour-test "tests/part/mbr/basic-single-part-unsized.dis")
 
 behaviour-test script: install
     ./zig-out/bin/dim --output .zig-cache/disk.img --script "{{script}}" 

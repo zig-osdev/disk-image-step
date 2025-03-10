@@ -1,0 +1,6 @@
+mbr-part
+  bootloader paste-file ./minimal.dis
+  ignore # partition 1
+  ignore # partition 2
+  ignore # partition 3
+  ignore # partition 4

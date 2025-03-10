@@ -1,0 +1,8 @@
+mbr-part
+  part
+    type empty
+    contains fill 0xAA
+  endpart
+  ignore # partition 2
+  ignore # partition 3
+  ignore # partition 4

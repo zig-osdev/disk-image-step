@@ -25,6 +25,7 @@ pub fn parse(ctx: dim.Context) !dim.Content {
     };
 
     var next_part_id: usize = 0;
+    var last_part_id: ?usize = null;
     while (next_part_id < pf.partitions.len) {
         const kw = try ctx.parse_enum(enum {
             bootloader,
@@ -45,8 +46,17 @@ pub fn parse(ctx: dim.Context) !dim.Content {
             },
             .part => {
                 pf.partitions[next_part_id] = try parse_partition(ctx);
+                last_part_id = next_part_id;
                 next_part_id += 1;
             },
+        }
+    }
+
+    if (last_part_id) |part_id| {
+        for (0..part_id -| 1) |prev| {
+            if (pf.partitions[prev].?.size == null) {
+                try ctx.report_nonfatal_error("MBR partition {} does not have a size, but is not last.", .{prev});
+            }
         }
     }
 
@@ -62,7 +72,7 @@ fn parse_partition(ctx: dim.Context) !Partition {
         .size = null,
         .bootable = false,
         .type = .empty,
-        .data = .empty,
+        .contains = .empty,
     };
 
     var updater: dim.FieldUpdater(Partition, &.{
@@ -77,7 +87,7 @@ fn parse_partition(ctx: dim.Context) !Partition {
             bootable,
             size,
             offset,
-            contents,
+            contains,
             endpart,
         });
         try switch (kw) {
@@ -85,7 +95,7 @@ fn parse_partition(ctx: dim.Context) !Partition {
             .bootable => updater.set(.bootable, true),
             .size => updater.set(.size, try ctx.parse_mem_size()),
             .offset => updater.set(.offset, try ctx.parse_mem_size()),
-            .contents => updater.set(.data, try ctx.parse_content()),
+            .contains => updater.set(.contains, try ctx.parse_content()),
             .endpart => break :parse_loop,
         };
     }
@@ -96,7 +106,31 @@ fn parse_partition(ctx: dim.Context) !Partition {
 }
 
 fn guess_size(self: *PartTable) dim.Content.GuessError!dim.SizeGuess {
-    _ = self;
+    var upper_bound: u64 = 512;
+    var all_parts_bounded = true;
+
+    for (self.partitions) |mpart| {
+        const part = mpart orelse continue;
+
+        if (part.offset != null and part.size != null) {
+            upper_bound = @max(upper_bound, part.offset.? + part.size.?);
+        } else {
+            all_parts_bounded = false;
+        }
+    }
+    if (all_parts_bounded)
+        return .{ .exact = upper_bound };
+
+    for (self.partitions) |mpart| {
+        const part = mpart orelse continue;
+
+        if (part.offset != null and part.size != null) {
+            upper_bound = @max(upper_bound, part.offset.? + part.size.?);
+        } else {
+            all_parts_bounded = false;
+        }
+    }
+
     @panic("not implemented yet!");
 }
 
@@ -211,7 +245,7 @@ pub const Partition = struct {
         .size = 0,
         .bootable = false,
         .type = .empty,
-        .data = undefined,
+        .contains = .empty,
     };
 
     offset: ?u64 = null,
@@ -220,7 +254,7 @@ pub const Partition = struct {
     bootable: bool,
     type: PartitionType,
 
-    data: dim.Content,
+    contains: dim.Content,
 };
 
 /// https://en.wikipedia.org/wiki/Partition_type

@@ -122,6 +122,9 @@ pub fn main() !u8 {
         return 1;
     }
 
+    const root_size_estimation = try root_content.guess_required_size();
+    std.log.info("root size: {}", .{root_size_estimation});
+
     {
         var output_file = try current_dir.atomicFile(output_path, .{});
         defer output_file.deinit();
@@ -542,7 +545,6 @@ pub const SizeGuess = union(enum) {
     unknown,
     exact: u64,
     at_least: u64,
-    at_most: u64,
 };
 
 pub const BinaryStream = struct {
