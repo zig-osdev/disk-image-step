@@ -22,6 +22,6 @@ pub fn parse(ctx: dim.Context) !dim.Content {
 fn render(self: *FillData, stream: *dim.BinaryStream) dim.Content.RenderError!void {
     try stream.writer().writeByteNTimes(
         self.fill_value,
-        stream.capacity,
+        stream.length,
     );
 }

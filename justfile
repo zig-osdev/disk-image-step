@@ -1,6 +1,8 @@
 
 zig:="zig-0.14.0"
 
+out:=".dim-out"
+
 default: install test
 
 install:
@@ -23,8 +25,8 @@ behaviour-tests: \
     (behaviour-test "tests/part/mbr/basic-single-part-unsized.dis")
 
 behaviour-test script: install
-    ./zig-out/bin/dim --output .zig-cache/disk.img --script "{{script}}" --size 30M
-
+    @mkdir -p {{ join(out, parent_directory(script)) }}
+    ./zig-out/bin/dim --output {{ join(out, without_extension(script) + ".img") }} --script "{{script}}" --size 30M
 
 fuzz:
     {{zig}} build install test --fuzz --port 35991

@@ -133,9 +133,7 @@ pub fn main() !u8 {
 
         try output_file.file.setEndPos(size_limit);
 
-        var stream = BinaryStream{
-            .capacity = size_limit,
-        };
+        var stream: BinaryStream = .init_file(output_file.file, size_limit);
 
         try root_content.render(&stream);
 
@@ -338,7 +336,7 @@ const Environment = struct {
 ///
 ///
 pub const Content = struct {
-    pub const RenderError = FileName.OpenError || FileHandle.ReadError || error{WriteError};
+    pub const RenderError = FileName.OpenError || FileHandle.ReadError || BinaryStream.WriteError;
     pub const GuessError = FileName.GetSizeError;
 
     obj: *anyopaque,
@@ -509,26 +507,117 @@ pub const FileHandle = struct {
 };
 
 pub const BinaryStream = struct {
-    pub const WriteError = error{IoError};
+    pub const WriteError = error{ Overflow, IoError };
     pub const Writer = std.io.Writer(*BinaryStream, WriteError, write_some);
 
+    backing: Backing,
+
+    virtual_offset: u64 = 0,
+
     /// Max number of bytes that can be written
-    capacity: u64,
+    length: u64,
+
+    /// Constructs a BinaryStream from a slice.
+    pub fn init_buffer(data: []u8) BinaryStream {
+        return .{
+            .backing = .{ .buffer = data.ptr },
+            .length = data.len,
+        };
+    }
+
+    /// Constructs a BinaryStream from a file.
+    pub fn init_file(file: std.fs.File, max_len: u64) BinaryStream {
+        return .{
+            .backing = .{
+                .file = .{
+                    .file = file,
+                    .base = 0,
+                },
+            },
+            .length = max_len,
+        };
+    }
+
+    /// Returns a view into the stream.
+    pub fn slice(bs: BinaryStream, offset: u64, length: ?u64) error{OutOfBounds}!BinaryStream {
+        if (offset > bs.length)
+            return error.OutOfBounds;
+        const true_length = length or bs.length - offset;
+        if (true_length > bs.length)
+            return error.OutOfBounds;
+
+        return .{
+            .length = true_length,
+            .backing = switch (bs.backing) {
+                .buffer => |old| .{ .buffer = old + offset },
+                .file => |old| .{
+                    .file = old.file,
+                    .base = old.base + offset,
+                },
+            },
+        };
+    }
+
+    pub fn write(bs: *BinaryStream, offset: u64, data: []const u8) WriteError!void {
+        const end_pos = offset + data.len;
+        if (end_pos > bs.length)
+            return error.Overflow;
+
+        switch (bs.backing) {
+            .buffer => |ptr| @memcpy(ptr[@intCast(offset)..][0..data.len], data),
+            .file => |state| {
+                state.file.seekTo(state.base + offset) catch return error.IoError;
+                state.file.writeAll(data) catch |err| switch (err) {
+                    error.DiskQuota, error.NoSpaceLeft, error.FileTooBig => return error.Overflow,
+
+                    error.InputOutput,
+                    error.DeviceBusy,
+                    error.InvalidArgument,
+                    error.AccessDenied,
+                    error.BrokenPipe,
+                    error.SystemResources,
+                    error.OperationAborted,
+                    error.NotOpenForWriting,
+                    error.LockViolation,
+                    error.WouldBlock,
+                    error.ConnectionResetByPeer,
+                    error.ProcessNotFound,
+                    error.NoDevice,
+                    error.Unexpected,
+                    => return error.IoError,
+                };
+            },
+        }
+    }
+
+    pub fn seek_to(bs: *BinaryStream, offset: u64) error{OutOfBounds}!void {
+        if (offset > bs.length)
+            return error.OutOfBounds;
+        bs.virtual_offset = offset;
+    }
 
     pub fn writer(bs: *BinaryStream) Writer {
         return .{ .context = bs };
     }
 
     fn write_some(stream: *BinaryStream, data: []const u8) WriteError!usize {
-        _ = stream;
-        // TODO: Implement write_some!
+        const remaining_len = stream.length - stream.virtual_offset;
 
-        // std.debug.print("dummy write of '{}'\n", .{
-        //     std.fmt.fmtSliceHexUpper(data),
-        // });
+        const written_len: usize = @intCast(@min(remaining_len, data.len));
 
-        return data.len;
+        try stream.write(stream.virtual_offset, data[0..written_len]);
+        stream.virtual_offset += written_len;
+
+        return written_len;
     }
+
+    pub const Backing = union(enum) {
+        file: struct {
+            file: std.fs.File,
+            base: u64,
+        },
+        buffer: [*]u8,
+    };
 };
 
 test {
