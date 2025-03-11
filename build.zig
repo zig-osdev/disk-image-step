@@ -58,20 +58,13 @@ pub fn build(b: *std.Build) void {
         std.mem.replaceScalar(u8, step_name, '/', '-');
         const script_test = b.step(step_name, b.fmt("Run {s} behaviour test", .{script}));
 
-        const run_sizeless = b.addRunArtifact(dim_exe);
-        run_sizeless.addArg("--output");
-        _ = run_sizeless.addOutputFileArg("disk.img");
-        run_sizeless.addArg("--script");
-        run_sizeless.addFileArg(b.path(script));
-        script_test.dependOn(&run_sizeless.step);
-
-        const run_with_size = b.addRunArtifact(dim_exe);
-        run_with_size.addArg("--output");
-        _ = run_with_size.addOutputFileArg("disk.img");
-        run_with_size.addArg("--script");
-        run_with_size.addFileArg(b.path(script));
-        run_with_size.addArgs(&.{ "--size", "30M" });
-        script_test.dependOn(&run_with_size.step);
+        const run_behaviour = b.addRunArtifact(dim_exe);
+        run_behaviour.addArg("--output");
+        _ = run_behaviour.addOutputFileArg("disk.img");
+        run_behaviour.addArg("--script");
+        run_behaviour.addFileArg(b.path(script));
+        run_behaviour.addArgs(&.{ "--size", "30M" });
+        script_test.dependOn(&run_behaviour.step);
 
         behaviour_tests_step.dependOn(script_test);
     }

@@ -22,8 +22,8 @@ const usage =
     \\OPTIONS:
     \\ --output <path>
     \\   mandatory: where to store the output file
-    \\[--size <size>]
-    \\   optional: how big is the resulting disk image? allowed suffixes: k,K,M,G
+    \\ --size <size>
+    \\   mandatory: how big is the resulting disk image? allowed suffixes: k,K,M,G
     \\ --script <path>
     \\   mandatory: which script file to execute?
     \\[--import-env]
