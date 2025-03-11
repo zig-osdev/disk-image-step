@@ -11,7 +11,7 @@ const max_script_size = 10 * DiskSize.MiB;
 
 const Options = struct {
     output: ?[]const u8 = null,
-    size: ?DiskSize = null,
+    size: DiskSize = DiskSize.empty,
     script: ?[]const u8 = null,
     @"import-env": bool = false,
 };
@@ -79,6 +79,11 @@ pub fn main() !u8 {
     if (bad_args)
         return 1;
 
+    const size_limit: u64 = options.size.size_in_bytes();
+    if (size_limit == 0) {
+        return fatal("--size must be given!");
+    }
+
     var current_dir = try std.fs.cwd().openDir(".", .{});
     defer current_dir.close();
 
@@ -122,21 +127,14 @@ pub fn main() !u8 {
         return 1;
     }
 
-    const root_size_estimation = try root_content.guess_required_size();
-    std.log.info("root size: {}", .{root_size_estimation});
-
     {
         var output_file = try current_dir.atomicFile(output_path, .{});
         defer output_file.deinit();
 
-        const size_limit: ?u64 = if (options.size) |disk_size| blk: {
-            try output_file.file.setEndPos(disk_size.size_in_bytes());
-
-            break :blk disk_size.size_in_bytes();
-        } else null;
+        try output_file.file.setEndPos(size_limit);
 
         var stream = BinaryStream{
-            .capacity = size_limit orelse 0,
+            .capacity = size_limit,
         };
 
         try root_content.render(&stream);
@@ -346,23 +344,7 @@ pub const Content = struct {
     obj: *anyopaque,
     vtable: *const VTable,
 
-    pub const empty: Content = .{
-        .obj = undefined,
-        .vtable = &emptyVTable,
-    };
-
-    const emptyVTable: VTable = blk: {
-        const Wrap = struct {
-            fn render(_: *anyopaque, _: *BinaryStream) RenderError!void {}
-            fn guess_size_fn(_: *anyopaque) GuessError!SizeGuess {
-                return .{ .exact = 0 };
-            }
-        };
-        break :blk .{
-            .render_fn = Wrap.render,
-            .guess_size_fn = Wrap.guess_size_fn,
-        };
-    };
+    pub const empty: Content = @import("components/EmptyData.zig").parse(undefined) catch unreachable;
 
     pub fn create_handle(obj: *anyopaque, vtable: *const VTable) Content {
         return .{ .obj = obj, .vtable = vtable };
@@ -373,22 +355,13 @@ pub const Content = struct {
         try content.vtable.render_fn(content.obj, stream);
     }
 
-    /// Attempts to determine the required size of the content.
-    ///
-    /// This may not be an exact guess, so the result can have
-    pub fn guess_required_size(content: Content) GuessError!SizeGuess {
-        return try content.vtable.guess_size_fn(content.obj);
-    }
-
     pub const VTable = struct {
         render_fn: *const fn (*anyopaque, *BinaryStream) RenderError!void,
-        guess_size_fn: *const fn (*anyopaque) GuessError!SizeGuess,
 
         pub fn create(
             comptime Container: type,
             comptime funcs: struct {
                 render_fn: *const fn (*Container, *BinaryStream) RenderError!void,
-                guess_size_fn: *const fn (*Container) GuessError!SizeGuess,
             },
         ) *const VTable {
             const Wrap = struct {
@@ -398,15 +371,9 @@ pub const Content = struct {
                         stream,
                     );
                 }
-                fn guess_size(self: *anyopaque) GuessError!SizeGuess {
-                    return funcs.guess_size_fn(
-                        @ptrCast(@alignCast(self)),
-                    );
-                }
             };
             return comptime &.{
                 .render_fn = Wrap.render,
-                .guess_size_fn = Wrap.guess_size,
             };
         }
     };
@@ -541,12 +508,6 @@ pub const FileHandle = struct {
     }
 };
 
-pub const SizeGuess = union(enum) {
-    unknown,
-    exact: u64,
-    at_least: u64,
-};
-
 pub const BinaryStream = struct {
     pub const WriteError = error{IoError};
     pub const Writer = std.io.Writer(*BinaryStream, WriteError, write_some);
@@ -579,6 +540,8 @@ const DiskSize = enum(u64) {
     const KiB = 1024;
     const MiB = 1024 * 1024;
     const GiB = 1024 * 1024 * 1024;
+
+    pub const empty: DiskSize = @enumFromInt(0);
 
     _,
 

@@ -15,13 +15,8 @@ pub fn parse(ctx: dim.Context) !dim.Content {
         .fill_value = try ctx.parse_integer(u8, 0),
     };
     return .create_handle(pf, .create(@This(), .{
-        .guess_size_fn = guess_size,
         .render_fn = render,
     }));
-}
-
-fn guess_size(_: *FillData) dim.Content.GuessError!dim.SizeGuess {
-    return .{ .at_least = 0 };
 }
 
 fn render(self: *FillData, stream: *dim.BinaryStream) dim.Content.RenderError!void {

@@ -23,7 +23,6 @@ behaviour-tests: \
     (behaviour-test "tests/part/mbr/basic-single-part-unsized.dis")
 
 behaviour-test script: install
-    ./zig-out/bin/dim --output .zig-cache/disk.img --script "{{script}}" 
     ./zig-out/bin/dim --output .zig-cache/disk.img --script "{{script}}" --size 30M
 
 

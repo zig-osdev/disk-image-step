@@ -61,7 +61,6 @@ pub fn parse(ctx: dim.Context) !dim.Content {
     }
 
     return .create_handle(pf, .create(PartTable, .{
-        .guess_size_fn = guess_size,
         .render_fn = render,
     }));
 }
@@ -103,35 +102,6 @@ fn parse_partition(ctx: dim.Context) !Partition {
     try updater.validate();
 
     return part;
-}
-
-fn guess_size(self: *PartTable) dim.Content.GuessError!dim.SizeGuess {
-    var upper_bound: u64 = 512;
-    var all_parts_bounded = true;
-
-    for (self.partitions) |mpart| {
-        const part = mpart orelse continue;
-
-        if (part.offset != null and part.size != null) {
-            upper_bound = @max(upper_bound, part.offset.? + part.size.?);
-        } else {
-            all_parts_bounded = false;
-        }
-    }
-    if (all_parts_bounded)
-        return .{ .exact = upper_bound };
-
-    for (self.partitions) |mpart| {
-        const part = mpart orelse continue;
-
-        if (part.offset != null and part.size != null) {
-            upper_bound = @max(upper_bound, part.offset.? + part.size.?);
-        } else {
-            all_parts_bounded = false;
-        }
-    }
-
-    @panic("not implemented yet!");
 }
 
 fn render(self: *PartTable, stream: *dim.BinaryStream) dim.Content.RenderError!void {

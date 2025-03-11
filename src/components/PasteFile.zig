@@ -11,15 +11,8 @@ pub fn parse(ctx: dim.Context) !dim.Content {
         .file_handle = try ctx.parse_file_name(),
     };
     return .create_handle(pf, .create(@This(), .{
-        .guess_size_fn = guess_size,
         .render_fn = render,
     }));
-}
-
-fn guess_size(self: *PasteFile) dim.Content.GuessError!dim.SizeGuess {
-    const size = try self.file_handle.get_size();
-
-    return .{ .exact = size };
 }
 
 fn render(self: *PasteFile, stream: *dim.BinaryStream) dim.Content.RenderError!void {
