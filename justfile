@@ -28,5 +28,7 @@ behaviour-test script: install
     @mkdir -p {{ join(out, parent_directory(script)) }}
     ./zig-out/bin/dim --output {{ join(out, without_extension(script) + ".img") }} --script "{{script}}" --size 30M
 
+# TODO(fqu):  sfdisk --json .dim-out/tests/part/mbr/basic-single-part-unsized.img
+
 fuzz:
     {{zig}} build install test --fuzz --port 35991

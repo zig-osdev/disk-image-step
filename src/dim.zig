@@ -336,7 +336,10 @@ const Environment = struct {
 ///
 ///
 pub const Content = struct {
-    pub const RenderError = FileName.OpenError || FileHandle.ReadError || BinaryStream.WriteError;
+    pub const RenderError = FileName.OpenError || FileHandle.ReadError || BinaryStream.WriteError || error{
+        ConfigurationError,
+        OutOfBounds,
+    };
     pub const GuessError = FileName.GetSizeError;
 
     obj: *anyopaque,
@@ -542,7 +545,7 @@ pub const BinaryStream = struct {
     pub fn slice(bs: BinaryStream, offset: u64, length: ?u64) error{OutOfBounds}!BinaryStream {
         if (offset > bs.length)
             return error.OutOfBounds;
-        const true_length = length or bs.length - offset;
+        const true_length = length orelse bs.length - offset;
         if (true_length > bs.length)
             return error.OutOfBounds;
 
@@ -551,8 +554,10 @@ pub const BinaryStream = struct {
             .backing = switch (bs.backing) {
                 .buffer => |old| .{ .buffer = old + offset },
                 .file => |old| .{
-                    .file = old.file,
-                    .base = old.base + offset,
+                    .file = .{
+                        .file = old.file,
+                        .base = old.base + offset,
+                    },
                 },
             },
         };

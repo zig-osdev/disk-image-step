@@ -7,6 +7,8 @@ const dim = @import("../../dim.zig");
 
 const PartTable = @This();
 
+const block_size = 512;
+
 bootloader: ?dim.Content,
 disk_id: ?u32,
 partitions: [4]?Partition,
@@ -41,7 +43,7 @@ pub fn parse(ctx: dim.Context) !dim.Content {
                 pf.bootloader = bootloader_content;
             },
             .ignore => {
-                pf.partitions[next_part_id] = .unused;
+                pf.partitions[next_part_id] = null;
                 next_part_id += 1;
             },
             .part => {
@@ -57,6 +59,22 @@ pub fn parse(ctx: dim.Context) !dim.Content {
             if (pf.partitions[prev].?.size == null) {
                 try ctx.report_nonfatal_error("MBR partition {} does not have a size, but is not last.", .{prev});
             }
+        }
+
+        var all_auto = true;
+        var all_manual = true;
+        for (pf.partitions) |part_or_null| {
+            const part = part_or_null orelse continue;
+
+            if (part.offset != null) {
+                all_auto = false;
+            } else {
+                all_manual = false;
+            }
+        }
+
+        if (!all_auto and !all_manual) {
+            try ctx.report_nonfatal_error("not all partitions have an explicit offset!", .{});
         }
     }
 
@@ -104,120 +122,121 @@ fn parse_partition(ctx: dim.Context) !Partition {
     return part;
 }
 
-fn render(self: *PartTable, stream: *dim.BinaryStream) dim.Content.RenderError!void {
-    _ = self;
-    _ = stream;
-}
-
-// .mbr => |table| { //  MbrTable
-//     {
-//         var boot_sector: [512]u8 = .{0} ** 512;
-
-//         @memcpy(boot_sector[0..table.bootloader.len], &table.bootloader);
-
-//         std.mem.writeInt(u32, boot_sector[0x1B8..0x1BC], if (table.disk_id) |disk_id| disk_id else 0x0000_0000, .little);
-//         std.mem.writeInt(u16, boot_sector[0x1BC..0x1BE], 0x0000, .little);
-
-//         var all_auto = true;
-//         var all_manual = true;
-//         for (table.partitions) |part_or_null| {
-//             const part = part_or_null orelse continue;
-
-//             if (part.offset != null) {
-//                 all_auto = false;
-//             } else {
-//                 all_manual = false;
-//             }
-//         }
-
-//         if (!all_auto and !all_manual) {
-//            std.log.err("{s}: not all partitions have an explicit offset!", .{context.slice()});
-//             return error.InvalidSectorBoundary;
-//         }
-
-//         const part_base = 0x01BE;
-//         var auto_offset: u64 = 2048;
-//         for (table.partitions, 0..) |part_or_null, part_id| {
-//             const reset_len = context.len;
-//             defer context.len = reset_len;
-
-//             var buffer: [64]u8 = undefined;
-//             context.appendSliceAssumeCapacity(std.fmt.bufPrint(&buffer, "[{}]", .{part_id}) catch unreachable);
-
-//             const desc = boot_sector[part_base + 16 * part_id ..][0..16];
-
-//             if (part_or_null) |part| {
-//                 // https://wiki.osdev.org/MBR#Partition_table_entry_format
-
-//                 const part_offset = part.offset orelse auto_offset;
-
-//                 if ((part_offset % 512) != 0) {
-//                     std.log.err("{s}: .offset is not divisible by 512!", .{context.slice()});
-//                     return error.InvalidSectorBoundary;
-//                 }
-//                 if ((part.size % 512) != 0) {
-//                     std.log.err("{s}: .size is not divisible by 512!", .{context.slice()});
-//                     return error.InvalidSectorBoundary;
-//                 }
-
-//                 const lba_u64 = @divExact(part_offset, 512);
-//                 const size_u64 = @divExact(part.size, 512);
-
-//                 const lba = std.math.cast(u32, lba_u64) orelse {
-//                     std.log.err("{s}: .offset is out of bounds!", .{context.slice()});
-//                     return error.InvalidSectorBoundary;
-//                 };
-//                 const size = std.math.cast(u32, size_u64) orelse {
-//                     std.log.err("{s}: .size is out of bounds!", .{context.slice()});
-//                     return error.InvalidSectorBoundary;
-//                 };
-
-//                 desc[0] = if (part.bootable) 0x80 else 0x00;
-
-//                 desc[1..4].* = mbr.encodeMbrChsEntry(lba); // chs_start
-//                 desc[4] = @intFromEnum(part.type);
-//                 desc[5..8].* = mbr.encodeMbrChsEntry(lba + size - 1); // chs_end
-//                 std.mem.writeInt(u32, desc[8..12], lba, .little); // lba_start
-//                 std.mem.writeInt(u32, desc[12..16], size, .little); // block_count
-
-//                 auto_offset += part.size;
-//             } else {
-//                 @memset(desc, 0); // inactive
-//             }
-//         }
-//         boot_sector[0x01FE] = 0x55;
-//         boot_sector[0x01FF] = 0xAA;
-
-//         try disk.handle.writeAll(&boot_sector);
-//     }
-
-//     {
-//         var auto_offset: u64 = 2048;
-//         for (table.partitions, 0..) |part_or_null, part_id| {
-//             const part = part_or_null orelse continue;
-
-//             const reset_len = context.len;
-//             defer context.len = reset_len;
-
-//             var buffer: [64]u8 = undefined;
-//             context.appendSliceAssumeCapacity(std.fmt.bufPrint(&buffer, "[{}]", .{part_id}) catch unreachable);
-
-//             try writeDiskImage(b, asking, disk, base + auto_offset, part.size, part.data, context);
-
-//             auto_offset += part.size;
-//         }
-//     }
-// },
-
-pub const Partition = struct {
-    pub const unused: Partition = .{
-        .offset = null,
-        .size = 0,
-        .bootable = false,
-        .type = .empty,
-        .contains = .empty,
+fn render(table: *PartTable, stream: *dim.BinaryStream) dim.Content.RenderError!void {
+    const last_part_id = blk: {
+        var last: usize = 0;
+        for (table.partitions, 0..) |p, i| {
+            if (p != null)
+                last = i;
+        }
+        break :blk last;
     };
 
+    const PartInfo = struct {
+        offset: u64,
+        size: u64,
+    };
+    var part_infos: [4]?PartInfo = @splat(null);
+
+    // Compute and write boot sector, based on the follow:
+    // - https://en.wikipedia.org/wiki/Master_boot_record#Sector_layout
+    {
+        var boot_sector: [block_size]u8 = @splat(0);
+
+        if (table.bootloader) |bootloader| {
+            var sector: dim.BinaryStream = .init_buffer(&boot_sector);
+
+            try bootloader.render(&sector);
+
+            const upper_limit: u64 = if (table.disk_id != null)
+                0x01B8
+            else
+                0x1BE;
+
+            if (sector.virtual_offset >= upper_limit) {
+                // TODO(fqu): Emit warning diagnostics here that parts of the bootloader will be overwritten by the MBR data.
+            }
+        }
+
+        if (table.disk_id) |disk_id| {
+            std.mem.writeInt(u32, boot_sector[0x1B8..0x1BC], disk_id, .little);
+        }
+
+        // TODO(fqu): Implement "0x5A5A if copy-protected"
+        std.mem.writeInt(u16, boot_sector[0x1BC..0x1BE], 0x0000, .little);
+
+        const part_base = 0x01BE;
+        var auto_offset: u64 = 2048 * block_size; // TODO(fqu): Make this configurable by allowing `offset` on the first partition, but still allow auto-layouting
+        for (table.partitions, &part_infos, 0..) |part_or_null, *pinfo, part_id| {
+            const desc: *[16]u8 = boot_sector[part_base + 16 * part_id ..][0..16];
+
+            // Initialize to "inactive" state
+            desc.* = @splat(0);
+            pinfo.* = null;
+
+            if (part_or_null) |part| {
+                // https://wiki.osdev.org/MBR#Partition_table_entry_format
+
+                const part_offset = part.offset orelse auto_offset;
+                const part_size = part.size orelse if (part_id == last_part_id)
+                    std.mem.alignBackward(u64, stream.length - part_offset, block_size)
+                else
+                    return error.ConfigurationError;
+
+                pinfo.* = .{
+                    .offset = part_offset,
+                    .size = part_size,
+                };
+
+                if ((part_offset % block_size) != 0) {
+                    std.log.err("partition offset is not divisible by {}!", .{block_size});
+                    return error.ConfigurationError;
+                }
+                if ((part_size % block_size) != 0) {
+                    std.log.err("partition size is not divisible by {}!", .{block_size});
+                    return error.ConfigurationError;
+                }
+
+                const lba_u64 = @divExact(part_offset, block_size);
+                const size_u64 = @divExact(part_size, block_size);
+
+                const lba = std.math.cast(u32, lba_u64) orelse {
+                    std.log.err("partition offset is out of bounds!", .{});
+                    return error.ConfigurationError;
+                };
+                const size = std.math.cast(u32, size_u64) orelse {
+                    std.log.err("partition size is out of bounds!", .{});
+                    return error.ConfigurationError;
+                };
+
+                desc[0] = if (part.bootable) 0x80 else 0x00;
+
+                desc[1..4].* = encodeMbrChsEntry(lba); // chs_start
+                desc[4] = @intFromEnum(part.type);
+                desc[5..8].* = encodeMbrChsEntry(lba + size - 1); // chs_end
+                std.mem.writeInt(u32, desc[8..12], lba, .little); // lba_start
+                std.mem.writeInt(u32, desc[12..16], size, .little); // block_count
+
+                auto_offset += part_size;
+            }
+        }
+        boot_sector[0x01FE] = 0x55;
+        boot_sector[0x01FF] = 0xAA;
+
+        try stream.write(0, &boot_sector);
+    }
+
+    for (part_infos, table.partitions) |maybe_info, maybe_part| {
+        const part = maybe_part orelse continue;
+        const info = maybe_info orelse unreachable;
+
+        var sub_view = try stream.slice(info.offset, info.size);
+
+        try part.contains.render(&sub_view);
+    }
+}
+
+pub const Partition = struct {
     offset: ?u64 = null,
     size: ?u64,
 
