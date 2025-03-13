@@ -7,6 +7,11 @@ const Tokenizer = @import("Tokenizer.zig");
 const Parser = @import("Parser.zig");
 const args = @import("args");
 
+comptime {
+    // Ensure zfat is linked to prevent compiler errors!
+    _ = @import("zfat");
+}
+
 const max_script_size = 10 * DiskSize.MiB;
 
 const Options = struct {
@@ -128,16 +133,14 @@ pub fn main() !u8 {
     }
 
     {
-        var output_file = try current_dir.atomicFile(output_path, .{});
-        defer output_file.deinit();
+        var output_file = try current_dir.createFile(output_path, .{ .read = true });
+        defer output_file.close();
 
-        try output_file.file.setEndPos(size_limit);
+        try output_file.setEndPos(size_limit);
 
-        var stream: BinaryStream = .init_file(output_file.file, size_limit);
+        var stream: BinaryStream = .init_file(output_file, size_limit);
 
         try root_content.render(&stream);
-
-        try output_file.finish();
     }
 
     return 0;
@@ -345,6 +348,7 @@ pub const Content = struct {
     pub const RenderError = FileName.OpenError || FileHandle.ReadError || BinaryStream.WriteError || error{
         ConfigurationError,
         OutOfBounds,
+        OutOfMemory,
     };
     pub const GuessError = FileName.GetSizeError;
 
@@ -517,6 +521,7 @@ pub const FileHandle = struct {
 
 pub const BinaryStream = struct {
     pub const WriteError = error{ Overflow, IoError };
+    pub const ReadError = error{ Overflow, IoError };
     pub const Writer = std.io.Writer(*BinaryStream, WriteError, write_some);
 
     backing: Backing,
@@ -567,6 +572,38 @@ pub const BinaryStream = struct {
                 },
             },
         };
+    }
+
+    pub fn read(bs: *BinaryStream, offset: u64, data: []u8) ReadError!void {
+        const end_pos = offset + data.len;
+        if (end_pos > bs.length)
+            return error.Overflow;
+
+        switch (bs.backing) {
+            .buffer => |ptr| @memcpy(data, ptr[@intCast(offset)..][0..data.len]),
+            .file => |state| {
+                state.file.seekTo(state.base + offset) catch return error.IoError;
+                state.file.reader().readNoEof(data) catch |err| switch (err) {
+                    error.InputOutput,
+                    error.AccessDenied,
+                    error.BrokenPipe,
+                    error.SystemResources,
+                    error.OperationAborted,
+                    error.LockViolation,
+                    error.WouldBlock,
+                    error.ConnectionResetByPeer,
+                    error.ProcessNotFound,
+                    error.Unexpected,
+                    error.IsDir,
+                    error.ConnectionTimedOut,
+                    error.NotOpenForReading,
+                    error.SocketNotConnected,
+                    error.Canceled,
+                    error.EndOfStream,
+                    => return error.IoError,
+                };
+            },
+        }
     }
 
     pub fn write(bs: *BinaryStream, offset: u64, data: []const u8) WriteError!void {
@@ -636,7 +673,7 @@ test {
     _ = Parser;
 }
 
-const DiskSize = enum(u64) {
+pub const DiskSize = enum(u64) {
     const KiB = 1024;
     const MiB = 1024 * 1024;
     const GiB = 1024 * 1024 * 1024;

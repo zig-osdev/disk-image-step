@@ -25,6 +25,24 @@ pub const FsOperation = union(enum) {
         size: u64,
         contents: dim.Content,
     },
+
+    pub fn execute(op: FsOperation, executor: anytype) !void {
+        _ = executor;
+        switch (op) {
+            .copy_file => |data| {
+                _ = data;
+            },
+            .copy_dir => |data| {
+                _ = data;
+            },
+            .make_dir => |data| {
+                _ = data;
+            },
+            .create_file => |data| {
+                _ = data;
+            },
+        }
+    }
 };
 
 fn parse_path(ctx: dim.Context) ![]const u8 {

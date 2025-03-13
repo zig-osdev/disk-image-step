@@ -22,11 +22,13 @@ behaviour-tests: \
     (behaviour-test "tests/part/mbr/minimal.dis") \
     (behaviour-test "tests/part/mbr/no-part-bootloader.dis") \
     (behaviour-test "tests/part/mbr/basic-single-part-sized.dis") \
+    (behaviour-test "tests/fs/fat12.dis") \
+    (behaviour-test "tests/fs/fat16.dis") \
     (behaviour-test "tests/fs/fat32.dis")
 
 behaviour-test script: install
     @mkdir -p {{ join(out, parent_directory(script)) }}
-    ./zig-out/bin/dim --output {{ join(out, without_extension(script) + ".img") }} --script "{{script}}" --size 30M
+    ./zig-out/bin/dim --output {{ join(out, without_extension(script) + ".img") }} --script "{{script}}" --size 33M
 
 # TODO(fqu):  sfdisk --json .dim-out/tests/part/mbr/basic-single-part-unsized.img
 
