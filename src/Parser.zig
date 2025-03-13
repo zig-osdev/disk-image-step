@@ -9,6 +9,7 @@ const Parser = @This();
 
 pub const Error = Tokenizer.Error || error{
     FileNotFound,
+    InvalidPath,
     UnknownVariable,
     IoError,
     BadDirective,
@@ -19,10 +20,10 @@ pub const Error = Tokenizer.Error || error{
 };
 
 pub const IO = struct {
-    fetch_file_fn: *const fn (io: *const IO, std.mem.Allocator, path: []const u8) error{ FileNotFound, IoError, OutOfMemory }![]const u8,
+    fetch_file_fn: *const fn (io: *const IO, std.mem.Allocator, path: []const u8) error{ FileNotFound, IoError, OutOfMemory, InvalidPath }![]const u8,
     resolve_variable_fn: *const fn (io: *const IO, name: []const u8) error{UnknownVariable}![]const u8,
 
-    pub fn fetch_file(io: *const IO, allocator: std.mem.Allocator, path: []const u8) error{ FileNotFound, IoError, OutOfMemory }![]const u8 {
+    pub fn fetch_file(io: *const IO, allocator: std.mem.Allocator, path: []const u8) error{ FileNotFound, IoError, OutOfMemory, InvalidPath }![]const u8 {
         return io.fetch_file_fn(io, allocator, path);
     }
 
@@ -402,6 +403,7 @@ fn fuzz_parser(_: void, input: []const u8) !void {
             error.BadDirective,
             error.FileNotFound,
             error.ExpectedIncludePath,
+            error.InvalidPath,
             => continue,
 
             error.MaxIncludeDepthReached,

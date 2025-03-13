@@ -29,6 +29,7 @@ behaviour-tests: \
 behaviour-test script: install
     @mkdir -p {{ join(out, parent_directory(script)) }}
     ./zig-out/bin/dim --output {{ join(out, without_extension(script) + ".img") }} --script "{{script}}" --size 33M
+    ./zig-out/bin/dim --output {{ join(out, without_extension(script) + ".img") }} --deps-file {{ join(out, without_extension(script) + ".d") }} --script "{{script}}" --size 33M
 
 # TODO(fqu):  sfdisk --json .dim-out/tests/part/mbr/basic-single-part-unsized.img
 

@@ -19,6 +19,7 @@ const Options = struct {
     size: DiskSize = DiskSize.empty,
     script: ?[]const u8 = null,
     @"import-env": bool = false,
+    @"deps-file": ?[]const u8 = null,
 };
 
 const usage =
@@ -40,6 +41,8 @@ const usage =
 ;
 
 const VariableMap = std.StringArrayHashMapUnmanaged([]const u8);
+
+var global_deps_file: ?std.fs.File = null;
 
 pub fn main() !u8 {
     var gpa_impl: std.heap.DebugAllocator(.{}) = .init;
@@ -95,6 +98,19 @@ pub fn main() !u8 {
     const script_source = try current_dir.readFileAlloc(gpa, script_path, max_script_size);
     defer gpa.free(script_source);
 
+    if (options.@"deps-file") |deps_file_path| {
+        global_deps_file = try std.fs.cwd().createFile(deps_file_path, .{});
+
+        try global_deps_file.?.writer().print(
+            \\{s}: {s}
+        , .{
+            output_path,
+            script_path,
+        });
+    }
+    defer if (global_deps_file) |deps_file|
+        deps_file.close();
+
     var mem_arena: std.heap.ArenaAllocator = .init(gpa);
     defer mem_arena.deinit();
 
@@ -143,7 +159,18 @@ pub fn main() !u8 {
         try root_content.render(&stream);
     }
 
+    if (global_deps_file) |deps_file| {
+        try deps_file.writeAll("\n");
+    }
+
     return 0;
+}
+
+pub fn declare_file_dependency(path: []const u8) !void {
+    const deps_file = global_deps_file orelse return;
+
+    try deps_file.writeAll(" \\\n    ");
+    try deps_file.writeAll(path);
 }
 
 fn fatal(msg: []const u8) noreturn {
@@ -325,8 +352,12 @@ const Environment = struct {
         std.log.err("PARSE ERROR: " ++ fmt, params);
     }
 
-    fn fetch_file(io: *const Parser.IO, allocator: std.mem.Allocator, path: []const u8) error{ FileNotFound, IoError, OutOfMemory }![]const u8 {
+    fn fetch_file(io: *const Parser.IO, allocator: std.mem.Allocator, path: []const u8) error{ FileNotFound, IoError, OutOfMemory, InvalidPath }![]const u8 {
         const env: *const Environment = @fieldParentPtr("io", io);
+
+        const name: FileName = .{ .root_dir = env.include_base, .rel_path = path };
+        try name.declare_dependency();
+
         return env.include_base.readFileAlloc(allocator, path, max_script_size) catch |err| switch (err) {
             error.OutOfMemory => return error.OutOfMemory,
             error.FileNotFound => return error.FileNotFound,
@@ -435,11 +466,14 @@ pub const FileName = struct {
             error.FileBusy,
             => return error.IoError,
         };
+
+        try name.declare_dependency();
+
         return .{ .file = file };
     }
 
     pub fn open_dir(name: FileName) OpenError!std.fs.Dir {
-        return name.root_dir.openDir(name.rel_path, .{ .iterate = true }) catch |err| switch (err) {
+        const dir = name.root_dir.openDir(name.rel_path, .{ .iterate = true }) catch |err| switch (err) {
             error.FileNotFound => {
                 var buffer: [std.fs.max_path_bytes]u8 = undefined;
                 std.log.err("failed to open \"{}/{}\": not found", .{
@@ -467,6 +501,20 @@ pub const FileName = struct {
             error.NotDir,
             => return error.IoError,
         };
+
+        try name.declare_dependency();
+
+        return dir;
+    }
+
+    pub fn declare_dependency(name: FileName) OpenError!void {
+        var buffer: [std.fs.max_path_bytes]u8 = undefined;
+
+        const realpath = name.root_dir.realpath(
+            name.rel_path,
+            &buffer,
+        ) catch @panic("failed to determine real path for dependency file!");
+        declare_file_dependency(realpath) catch @panic("Failed to write to deps file!");
     }
 
     pub const GetSizeError = error{ FileNotFound, InvalidPath, IoError };
