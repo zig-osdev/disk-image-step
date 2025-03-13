@@ -11,7 +11,11 @@ const FAT = @This();
 
 format_as: FatType,
 label: ?[]const u8 = null,
+fats: ?fatfs.FatTables = null,
+rootdir_size: ?c_uint = null,
 ops: std.ArrayList(common.FsOperation),
+sector_align: ?c_uint = null,
+cluster_size: ?u32 = null,
 
 pub fn parse(ctx: dim.Context) !dim.Content {
     const fat_type = try ctx.parse_enum(FatType);
@@ -22,11 +26,14 @@ pub fn parse(ctx: dim.Context) !dim.Content {
         .ops = .init(ctx.get_arena()),
     };
 
-    try common.parse_ops(
-        ctx,
-        "endfat",
-        Appender{ .fat = pf },
-    );
+    var appender: Appender = .{
+        .fat = pf,
+        .updater = .init(ctx, pf),
+    };
+
+    try common.parse_ops(ctx, "endfat", &appender);
+
+    try appender.updater.validate();
 
     return .create_handle(pf, .create(@This(), .{
         .render_fn = render,
@@ -35,21 +42,40 @@ pub fn parse(ctx: dim.Context) !dim.Content {
 
 const Appender = struct {
     fat: *FAT,
+    updater: dim.FieldUpdater(FAT, &.{
+        .fats,
+        .label,
+        .rootdir_size,
+        .sector_align,
+        .cluster_size,
+
+        // cannot be accessed:
+        .format_as,
+        .ops,
+    }),
 
     pub fn append_common_op(self: @This(), op: common.FsOperation) !void {
         try self.fat.ops.append(op);
     }
 
-    pub fn parse_custom_op(self: @This(), ctx: dim.Context, str_op: []const u8) !void {
-        const Op = enum { label };
+    pub fn parse_custom_op(self: *@This(), ctx: dim.Context, str_op: []const u8) !void {
+        const Op = enum {
+            label,
+            fats,
+            @"root-size",
+            @"sector-align",
+            @"cluster-size",
+        };
         const op = std.meta.stringToEnum(Op, str_op) orelse return ctx.report_fatal_error(
             "Unknown file system operation '{s}'",
             .{str_op},
         );
         switch (op) {
-            .label => {
-                self.fat.label = try ctx.parse_string();
-            },
+            .label => try self.updater.set(.label, try ctx.parse_string()),
+            .fats => try self.updater.set(.fats, try ctx.parse_enum(fatfs.FatTables)),
+            .@"root-size" => try self.updater.set(.rootdir_size, try ctx.parse_integer(c_uint, 0)),
+            .@"sector-align" => try self.updater.set(.sector_align, try ctx.parse_integer(c_uint, 0)),
+            .@"cluster-size" => try self.updater.set(.cluster_size, try ctx.parse_integer(u32, 0)),
         }
     }
 };
@@ -86,10 +112,11 @@ fn render(self: *FAT, stream: *dim.BinaryStream) dim.Content.RenderError!void {
     var workspace: [8192]u8 = undefined;
     fatfs.mkfs("0:", .{
         .filesystem = self.format_as.get_zfat_type(),
-        .fats = .two,
-        .sector_align = 0, // default/auto
-        .rootdir_size = 512, // randomly chosen, might need adjustment
-        .use_partitions = false,
+        .fats = self.fats orelse .two,
+        .sector_align = self.sector_align orelse 0, // default/auto
+        .cluster_size = self.cluster_size orelse 0,
+        .rootdir_size = self.rootdir_size orelse 512, // randomly chosen, might need adjustment
+        .use_partitions = false, // we have other means for this
     }, &workspace) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
         error.WriteProtected => @panic("bug in zfat"),
