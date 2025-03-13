@@ -5,10 +5,10 @@ mbr-part
     size 500M
     bootable
     contents
-      fat fat32
+      vfat fat32
         label AshetOS
-        add-dir ../../rootfs .
-        add-dir $PATH2 .
+        copy-dir ../../rootfs .
+        copy-dir $PATH2 .
         copy-file $PATH3 apps/hello-world.ashex
         copy-file $PATH3 apps/hello-gui.ashex
         copy-file $PATH4 apps/clock.ashex

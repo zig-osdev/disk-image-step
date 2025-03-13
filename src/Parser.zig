@@ -34,10 +34,10 @@ pub const IO = struct {
 const File = struct {
     path: []const u8,
     tokenizer: Tokenizer,
-    free: bool,
 };
 
 allocator: std.mem.Allocator,
+arena: std.heap.ArenaAllocator,
 io: *const IO,
 
 file_stack: []File,
@@ -50,6 +50,7 @@ pub fn init(allocator: std.mem.Allocator, io: *const IO, options: InitOptions) e
     var slice = try allocator.alloc(File, options.max_include_depth);
     slice.len = 0;
     return .{
+        .arena = std.heap.ArenaAllocator.init(allocator),
         .allocator = allocator,
         .io = io,
         .max_include_depth = options.max_include_depth,
@@ -58,14 +59,9 @@ pub fn init(allocator: std.mem.Allocator, io: *const IO, options: InitOptions) e
 }
 
 pub fn deinit(parser: *Parser) void {
-    for (parser.file_stack) |file| {
-        if (file.free) {
-            parser.allocator.free(file.path);
-            parser.allocator.free(file.tokenizer.source);
-        }
-    }
     parser.file_stack.len = parser.max_include_depth;
     parser.allocator.free(parser.file_stack);
+    parser.arena.deinit();
     parser.* = undefined;
 }
 
@@ -83,15 +79,13 @@ pub fn push_source(parser: *Parser, options: struct {
     parser.file_stack[index] = .{
         .path = options.path,
         .tokenizer = .init(options.contents),
-        .free = false,
     };
 }
 
 pub fn push_file(parser: *Parser, include_path: []const u8) !void {
-    const abs_include_path = try parser.get_include_path(parser.allocator, include_path);
+    const abs_include_path = try parser.get_include_path(parser.arena.allocator(), include_path);
 
-    const file_contents = try parser.io.fetch_file(parser.allocator, abs_include_path);
-    errdefer parser.allocator.free(file_contents);
+    const file_contents = try parser.io.fetch_file(parser.arena.allocator(), abs_include_path);
 
     const index = parser.file_stack.len;
     parser.file_stack.len += 1;
@@ -99,7 +93,6 @@ pub fn push_file(parser: *Parser, include_path: []const u8) !void {
     parser.file_stack[index] = .{
         .path = abs_include_path,
         .tokenizer = .init(file_contents),
-        .free = true,
     };
 }
 
@@ -133,16 +126,15 @@ pub fn next(parser: *Parser) (Error || error{UnexpectedEndOfFile})![]const u8 {
 }
 
 pub fn next_or_eof(parser: *Parser) Error!?[]const u8 {
-    if (parser.file_stack.len == 0)
-        return null;
-
-    while (true) {
+    fetch_loop: while (parser.file_stack.len > 0) {
         const top = &parser.file_stack[parser.file_stack.len - 1];
 
-        const token = if (try fetch_token(&top.tokenizer)) |tok|
-            tok
-        else
-            return null;
+        const token = (try fetch_token(&top.tokenizer)) orelse {
+            // we exhausted tokens in the current file, pop the stack and continue
+            // on lower file
+            parser.file_stack.len -= 1;
+            continue :fetch_loop;
+        };
 
         switch (token.type) {
             .whitespace, .comment => unreachable,
@@ -175,6 +167,8 @@ pub fn next_or_eof(parser: *Parser) Error!?[]const u8 {
             },
         }
     }
+
+    return null;
 }
 
 fn fetch_token(tok: *Tokenizer) Tokenizer.Error!?Token {
@@ -337,7 +331,7 @@ test "parser with variables and include files" {
         .contents =
         \\select-disk $DISK
         \\!include "../parent/kernel.script"
-        \\
+        \\end-of sequence
         ,
     });
 
@@ -347,6 +341,8 @@ test "parser with variables and include files" {
         "copy-file",
         "./zig-out/bin/kernel.elf",
         "/BOOT/vzlinuz",
+        "end-of",
+        "sequence",
     };
 
     for (sequence) |item| {

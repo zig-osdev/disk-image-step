@@ -22,7 +22,7 @@ behaviour-tests: \
     (behaviour-test "tests/part/mbr/minimal.dis") \
     (behaviour-test "tests/part/mbr/no-part-bootloader.dis") \
     (behaviour-test "tests/part/mbr/basic-single-part-sized.dis") \
-    (behaviour-test "tests/part/mbr/basic-single-part-unsized.dis")
+    (behaviour-test "tests/fs/fat32.dis")
 
 behaviour-test script: install
     @mkdir -p {{ join(out, parent_directory(script)) }}

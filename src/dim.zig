@@ -152,7 +152,7 @@ fn fatal(msg: []const u8) noreturn {
 const content_types: []const struct { []const u8, type } = &.{
     .{ "mbr-part", @import("components/part/MbrPartitionTable.zig") },
     // .{ "gpt-part", @import("components/part/GptPartitionTable.zig") },
-    // .{ "fat", @import("components/fs/FatFileSystem.zig") },
+    .{ "vfat", @import("components/fs/FatFileSystem.zig") },
     .{ "paste-file", @import("components/PasteFile.zig") },
     .{ "empty", @import("components/EmptyData.zig") },
     .{ "fill", @import("components/FillData.zig") },
@@ -160,6 +160,10 @@ const content_types: []const struct { []const u8, type } = &.{
 
 pub const Context = struct {
     env: *Environment,
+
+    pub fn get_arena(ctx: Context) std.mem.Allocator {
+        return ctx.env.arena;
+    }
 
     pub fn alloc_object(ctx: Context, comptime T: type) error{OutOfMemory}!*T {
         return try ctx.env.arena.create(T);
@@ -175,7 +179,9 @@ pub const Context = struct {
     }
 
     pub fn parse_string(ctx: Context) Environment.ParseError![]const u8 {
-        return ctx.env.parser.next();
+        const str = try ctx.env.parser.next();
+        // std.debug.print("token: '{}'\n", .{std.zig.fmtEscapes(str)});
+        return str;
     }
 
     pub fn parse_file_name(ctx: Context) Environment.ParseError!FileName {
@@ -640,7 +646,7 @@ const DiskSize = enum(u64) {
     _,
 
     pub fn parse(str: []const u8) error{ InvalidSize, Overflow }!DiskSize {
-        const suffix_scaling: ?u64 = if (std.mem.endsWith(u8, str, "K"))
+        const suffix_scaling: ?u64 = if (std.mem.endsWith(u8, str, "K") or std.mem.endsWith(u8, str, "k"))
             KiB
         else if (std.mem.endsWith(u8, str, "M"))
             MiB
