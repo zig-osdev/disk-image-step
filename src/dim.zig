@@ -398,7 +398,14 @@ pub const FileName = struct {
 
     pub fn open(name: FileName) OpenError!FileHandle {
         const file = name.root_dir.openFile(name.rel_path, .{}) catch |err| switch (err) {
-            error.FileNotFound => return error.FileNotFound,
+            error.FileNotFound => {
+                var buffer: [std.fs.max_path_bytes]u8 = undefined;
+                std.log.err("failed to open \"{}/{}\": not found", .{
+                    std.zig.fmtEscapes(name.root_dir.realpath(".", &buffer) catch |e| @errorName(e)),
+                    std.zig.fmtEscapes(name.rel_path),
+                });
+                return error.FileNotFound;
+            },
 
             error.NameTooLong,
             error.InvalidWtf8,
@@ -429,6 +436,37 @@ pub const FileName = struct {
             => return error.IoError,
         };
         return .{ .file = file };
+    }
+
+    pub fn open_dir(name: FileName) OpenError!std.fs.Dir {
+        return name.root_dir.openDir(name.rel_path, .{ .iterate = true }) catch |err| switch (err) {
+            error.FileNotFound => {
+                var buffer: [std.fs.max_path_bytes]u8 = undefined;
+                std.log.err("failed to open \"{}/{}\": not found", .{
+                    std.zig.fmtEscapes(name.root_dir.realpath(".", &buffer) catch |e| @errorName(e)),
+                    std.zig.fmtEscapes(name.rel_path),
+                });
+                return error.FileNotFound;
+            },
+
+            error.NameTooLong,
+            error.InvalidWtf8,
+            error.BadPathName,
+            error.InvalidUtf8,
+            => return error.InvalidPath,
+
+            error.DeviceBusy,
+            error.AccessDenied,
+            error.SystemResources,
+            error.NoDevice,
+            error.Unexpected,
+            error.NetworkNotFound,
+            error.SymLinkLoop,
+            error.ProcessFdQuotaExceeded,
+            error.SystemFdQuotaExceeded,
+            error.NotDir,
+            => return error.IoError,
+        };
     }
 
     pub const GetSizeError = error{ FileNotFound, InvalidPath, IoError };

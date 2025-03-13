@@ -3,8 +3,8 @@ mkdir       /boot/EFI/nixos/.extra-files/
 mkdir       /Users/xq/
 
 # copy-XXX uses <dst> <src> syntax as it's consistent with other paths
-copy-dir    /Windows ./dummy/Windows   
-copy-file   /Users/xq/README.md ./dummy/README.md 
+copy-dir    /Windows ./rootfs/Windows   
+copy-file   /Users/xq/README.md ./rootfs/README.md 
 
 # create-file <path> <size> <contents> creates nested data
 create-file /Users/xq/blob.data 512k fill 0x70

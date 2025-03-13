@@ -143,7 +143,9 @@ fn render(self: *FAT, stream: *dim.BinaryStream) dim.Content.RenderError!void {
             var label_buffer: [max_label_len + 3:0]u8 = undefined;
             const buf = std.fmt.bufPrintZ(&label_buffer, "0:{s}", .{label}) catch @panic("buffer too small");
 
-            _ = fatfs.api.setlabel(buf.ptr);
+            if (fatfs.api.setlabel(buf.ptr) != 0) {
+                return error.IoError;
+            }
         } else {
             std.log.err("label \"{}\" is {} characters long, but only up to {} are permitted.", .{
                 std.zig.fmtEscapes(label),
@@ -186,7 +188,7 @@ const FatType = enum {
 };
 
 const AtomicOps = struct {
-    pub fn mkdir(ops: AtomicOps, path: []const u8) !void {
+    pub fn mkdir(ops: AtomicOps, path: []const u8) dim.Content.RenderError!void {
         _ = ops;
 
         var path_buffer: [max_path_len:0]u8 = undefined;
@@ -195,11 +197,22 @@ const AtomicOps = struct {
         const joined = try std.mem.concatWithSentinel(fba.allocator(), u8, &.{ "0:/", path }, 0);
         fatfs.mkdir(joined) catch |err| switch (err) {
             error.Exist => {}, // this is good
-            else => |e| return e,
+            error.OutOfMemory => return error.OutOfMemory,
+            error.Timeout => @panic("implementation bug in fatfs glue"),
+            error.InvalidName => return error.ConfigurationError,
+            error.WriteProtected => @panic("implementation bug in fatfs glue"),
+            error.DiskErr => return error.IoError,
+            error.NotReady => @panic("implementation bug in fatfs glue"),
+            error.InvalidDrive => @panic("implementation bug in fatfs glue"),
+            error.NotEnabled => @panic("implementation bug in fatfs glue"),
+            error.NoFilesystem => @panic("implementation bug in fatfs glue"),
+            error.IntErr => return error.IoError,
+            error.NoPath => @panic("implementation bug in fatfs glue"),
+            error.Denied => @panic("implementation bug in fatfs glue"),
         };
     }
 
-    pub fn mkfile(ops: AtomicOps, path: []const u8, host_file: std.fs.File) !void {
+    pub fn mkfile(ops: AtomicOps, path: []const u8, reader: anytype) dim.Content.RenderError!void {
         _ = ops;
 
         var path_buffer: [max_path_len:0]u8 = undefined;
@@ -210,20 +223,40 @@ const AtomicOps = struct {
 
         const path_z = path_buffer[0..path.len :0];
 
-        const stat = try host_file.stat();
-
-        const size = std.math.cast(u32, stat.size) orelse return error.FileTooBig;
-
-        _ = size;
-
-        var fs_file = try fatfs.File.create(path_z);
+        var fs_file = fatfs.File.create(path_z) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            error.Timeout => @panic("implementation bug in fatfs glue"),
+            error.InvalidName => return error.ConfigurationError,
+            error.WriteProtected => @panic("implementation bug in fatfs glue"),
+            error.DiskErr => return error.IoError,
+            error.NotReady => @panic("implementation bug in fatfs glue"),
+            error.InvalidDrive => @panic("implementation bug in fatfs glue"),
+            error.NotEnabled => @panic("implementation bug in fatfs glue"),
+            error.NoFilesystem => @panic("implementation bug in fatfs glue"),
+            error.IntErr => return error.IoError,
+            error.NoFile => @panic("implementation bug in fatfs glue"),
+            error.NoPath => @panic("implementation bug in fatfs glue"),
+            error.Denied => @panic("implementation bug in fatfs glue"),
+            error.Exist => @panic("implementation bug in fatfs glue"),
+            error.InvalidObject => @panic("implementation bug in fatfs glue"),
+            error.Locked => @panic("implementation bug in fatfs glue"),
+            error.TooManyOpenFiles => @panic("implementation bug in fatfs glue"),
+        };
         defer fs_file.close();
 
         var fifo: std.fifo.LinearFifo(u8, .{ .Static = 8192 }) = .init();
-        try fifo.pump(
-            host_file.reader(),
+        fifo.pump(
+            reader,
             fs_file.writer(),
-        );
+        ) catch |err| switch (@as(dim.FileHandle.ReadError || fatfs.File.ReadError.Error, err)) {
+            error.Overflow => return error.IoError,
+            error.ReadFileFailed => return error.IoError,
+            error.Timeout => @panic("implementation bug in fatfs glue"),
+            error.DiskErr => return error.IoError,
+            error.IntErr => return error.IoError,
+            error.Denied => @panic("implementation bug in fatfs glue"),
+            error.InvalidObject => @panic("implementation bug in fatfs glue"),
+        };
     }
 };
 
