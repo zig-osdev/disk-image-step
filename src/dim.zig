@@ -228,10 +228,21 @@ pub const Context = struct {
     pub fn parse_enum(ctx: Context, comptime E: type) Environment.ParseError!E {
         if (@typeInfo(E) != .@"enum")
             @compileError("get_enum requires an enum type!");
-        return std.meta.stringToEnum(
+        const tag_name = try ctx.parse_string();
+        const converted = std.meta.stringToEnum(
             E,
-            try ctx.parse_string(),
-        ) orelse return error.InvalidEnumTag;
+            tag_name,
+        );
+        if (converted) |ok|
+            return ok;
+        std.debug.print("detected invalid enum tag for {s}: \"{}\"\n", .{ @typeName(E), std.zig.fmtEscapes(tag_name) });
+        std.debug.print("valid options are:\n", .{});
+
+        for (std.enums.values(E)) |val| {
+            std.debug.print("- '{s}'\n", .{@tagName(val)});
+        }
+
+        return error.InvalidEnumTag;
     }
 
     pub fn parse_integer(ctx: Context, comptime I: type, base: u8) Environment.ParseError!I {
@@ -355,14 +366,25 @@ const Environment = struct {
     fn fetch_file(io: *const Parser.IO, allocator: std.mem.Allocator, path: []const u8) error{ FileNotFound, IoError, OutOfMemory, InvalidPath }![]const u8 {
         const env: *const Environment = @fieldParentPtr("io", io);
 
+        const contents = env.include_base.readFileAlloc(allocator, path, max_script_size) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            error.FileNotFound => {
+                const ctx = Context{ .env = @constCast(env) };
+                var buffer: [std.fs.max_path_bytes]u8 = undefined;
+                try ctx.report_nonfatal_error("failed to open file: \"{}/{}\"", .{
+                    std.zig.fmtEscapes(env.include_base.realpath(".", &buffer) catch return error.FileNotFound),
+                    std.zig.fmtEscapes(path),
+                });
+                return error.FileNotFound;
+            },
+            else => return error.IoError,
+        };
+        errdefer allocator.free(contents);
+
         const name: FileName = .{ .root_dir = env.include_base, .rel_path = path };
         try name.declare_dependency();
 
-        return env.include_base.readFileAlloc(allocator, path, max_script_size) catch |err| switch (err) {
-            error.OutOfMemory => return error.OutOfMemory,
-            error.FileNotFound => return error.FileNotFound,
-            else => return error.IoError,
-        };
+        return contents;
     }
 
     fn resolve_var(io: *const Parser.IO, name: []const u8) error{UnknownVariable}![]const u8 {
