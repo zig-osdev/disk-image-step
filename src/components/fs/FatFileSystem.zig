@@ -6,6 +6,7 @@ const fatfs = @import("zfat");
 
 const block_size = 512;
 const max_path_len = 8192; // this should be enough
+const max_label_len = 11; // see http://elm-chan.org/fsw/ff/doc/setlabel.html
 
 const FAT = @This();
 
@@ -128,20 +129,34 @@ fn render(self: *FAT, stream: *dim.BinaryStream) dim.Content.RenderError!void {
     };
 
     const ops = self.ops.items;
-    if (ops.len > 0) {
-        filesystem.mount("0:", true) catch |err| switch (err) {
-            error.NotEnabled => @panic("bug in zfat"),
-            error.DiskErr => return error.IoError,
-            error.NotReady => @panic("bug in zfat disk wrapper"),
-            error.InvalidDrive => @panic("bug in AtomicOps"),
-            error.NoFilesystem => @panic("bug in zfat"),
-        };
 
-        const wrapper = AtomicOps{};
+    filesystem.mount("0:", true) catch |err| switch (err) {
+        error.NotEnabled => @panic("bug in zfat"),
+        error.DiskErr => return error.IoError,
+        error.NotReady => @panic("bug in zfat disk wrapper"),
+        error.InvalidDrive => @panic("bug in AtomicOps"),
+        error.NoFilesystem => @panic("bug in zfat"),
+    };
 
-        for (ops) |op| {
-            try op.execute(wrapper);
+    if (self.label) |label| {
+        if (label.len <= max_label_len) {
+            var label_buffer: [max_label_len + 3:0]u8 = undefined;
+            const buf = std.fmt.bufPrintZ(&label_buffer, "0:{s}", .{label}) catch @panic("buffer too small");
+
+            _ = fatfs.api.setlabel(buf.ptr);
+        } else {
+            std.log.err("label \"{}\" is {} characters long, but only up to {} are permitted.", .{
+                std.zig.fmtEscapes(label),
+                label.len,
+                max_label_len,
+            });
         }
+    }
+
+    const wrapper = AtomicOps{};
+
+    for (ops) |op| {
+        try op.execute(wrapper);
     }
 }
 

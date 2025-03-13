@@ -16,6 +16,7 @@ pub fn build(b: *std.Build) void {
         // .rtc = .dynamic,
         .mkfs = true,
         .exfat = true,
+        .label = true,
     });
 
     const zfat_mod = zfat_dep.module("zfat");
