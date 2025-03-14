@@ -8,8 +8,28 @@ This tool is incredibly valuable when implementing your own operating system, em
 
 ## Example
 
-```plain
-
+```rb
+mbr-part
+    bootloader paste-file "./syslinux.bin"
+    part # partition 1
+        type fat16-lba
+        size 25M
+        contains vfat fat16
+            label "BOOT"
+            copy-dir "/syslinux" "./bootfs/syslinux"
+        endfat
+    endpart
+    part # partition 2
+        type fat32-lba
+        contains vfat fat32
+            label "OS"
+            mkdir "/home/dimmer"
+            copy-file "/home/dimmer/.config/dimmer.cfg" "./dimmer.cfg"
+            !include "./rootfs/files.dis"
+        endfat
+    endpart
+    ignore # partition 3
+    ignore # partition 4
 ```
 
 ## Available Content Types
@@ -77,12 +97,12 @@ The `mbr-part` component will end after all 4 partitions are specified.
 | `empty`      | 0x00 | No content                                                                                                                                         |
 | `fat12`      | 0x01 | [FAT12](https://en.wikipedia.org/wiki/FAT12)                                                                                                       |
 | `ntfs`       | 0x07 | [NTFS](https://en.wikipedia.org/wiki/NTFS)                                                                                                         |
-| `fat32_chs`  | 0x0B | [FAT32](https://en.wikipedia.org/wiki/FAT32) with [CHS](https://en.wikipedia.org/wiki/Cylinder-head-sector) addressing                             |
-| `fat32_lba`  | 0x0C | [FAT32](https://en.wikipedia.org/wiki/FAT32) with [LBA](https://en.wikipedia.org/wiki/Logical_block_addressing) addressing                         |
-| `fat16_lba`  | 0x0E | [FAT16B](https://en.wikipedia.org/wiki/File_Allocation_Table#FAT16B) with [LBA](https://en.wikipedia.org/wiki/Logical_block_addressing) addressing |
-| `linux_swap` | 0x82 | [Linux swap space](https://en.wikipedia.org/wiki/Swap_space#Linux)                                                                                 |
-| `linux_fs`   | 0x83 | Any [Linux file system](https://en.wikipedia.org/wiki/File_system#Linux)                                                                           |
-| `linux_lvm`  | 0x8E | [Linux LVM](https://en.wikipedia.org/wiki/Logical_Volume_Manager_(Linux))                                                                          |
+| `fat32-chs`  | 0x0B | [FAT32](https://en.wikipedia.org/wiki/FAT32) with [CHS](https://en.wikipedia.org/wiki/Cylinder-head-sector) addressing                             |
+| `fat32-lba`  | 0x0C | [FAT32](https://en.wikipedia.org/wiki/FAT32) with [LBA](https://en.wikipedia.org/wiki/Logical_block_addressing) addressing                         |
+| `fat16-lba`  | 0x0E | [FAT16B](https://en.wikipedia.org/wiki/File_Allocation_Table#FAT16B) with [LBA](https://en.wikipedia.org/wiki/Logical_block_addressing) addressing |
+| `linux-swap` | 0x82 | [Linux swap space](https://en.wikipedia.org/wiki/Swap_space#Linux)                                                                                 |
+| `linux-fs`   | 0x83 | Any [Linux file system](https://en.wikipedia.org/wiki/File_system#Linux)                                                                           |
+| `linux-lvm`  | 0x8E | [Linux LVM](https://en.wikipedia.org/wiki/Logical_Volume_Manager_(Linux))                                                                          |
 
 A complete list can be [found on Wikipedia](https://en.wikipedia.org/wiki/Partition_type), but [we do not support that yet](https://github.com/zig-osdev/disk-image-step/issues/8).
 

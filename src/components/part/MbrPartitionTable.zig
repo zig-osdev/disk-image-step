@@ -88,7 +88,7 @@ fn parse_partition(ctx: dim.Context) !Partition {
         .offset = null,
         .size = null,
         .bootable = false,
-        .type = .empty,
+        .type = 0x00,
         .contains = .empty,
     };
 
@@ -108,7 +108,19 @@ fn parse_partition(ctx: dim.Context) !Partition {
             endpart,
         });
         try switch (kw) {
-            .type => updater.set(.type, try ctx.parse_enum(PartitionType)),
+            .type => {
+                const part_name = try ctx.parse_string();
+
+                const encoded = if (std.fmt.parseInt(u8, part_name, 0)) |value|
+                    value
+                else |_|
+                    known_partition_types.get(part_name) orelse blk: {
+                        try ctx.report_nonfatal_error("unknown partition type '{}'", .{std.zig.fmtEscapes(part_name)});
+                        break :blk 0x00;
+                    };
+
+                try updater.set(.type, encoded);
+            },
             .bootable => updater.set(.bootable, true),
             .size => updater.set(.size, try ctx.parse_mem_size()),
             .offset => updater.set(.offset, try ctx.parse_mem_size()),
@@ -212,7 +224,7 @@ fn render(table: *PartTable, stream: *dim.BinaryStream) dim.Content.RenderError!
                 desc[0] = if (part.bootable) 0x80 else 0x00;
 
                 desc[1..4].* = encodeMbrChsEntry(lba); // chs_start
-                desc[4] = @intFromEnum(part.type);
+                desc[4] = part.type;
                 desc[5..8].* = encodeMbrChsEntry(lba + size - 1); // chs_end
                 std.mem.writeInt(u32, desc[8..12], lba, .little); // lba_start
                 std.mem.writeInt(u32, desc[12..16], size, .little); // block_count
@@ -241,57 +253,28 @@ pub const Partition = struct {
     size: ?u64,
 
     bootable: bool,
-    type: PartitionType,
+    type: u8,
 
     contains: dim.Content,
 };
 
-/// https://en.wikipedia.org/wiki/Partition_type
-pub const PartitionType = enum(u8) {
-    empty = 0x00,
+// TODO: Fill from https://en.wikipedia.org/wiki/Partition_type
+const known_partition_types = std.StaticStringMap(u8).initComptime(.{
+    .{ "empty", 0x00 },
 
-    fat12 = 0x01,
-    ntfs = 0x07,
+    .{ "fat12", 0x01 },
 
-    fat32_chs = 0x0B,
-    fat32_lba = 0x0C,
+    .{ "ntfs", 0x07 },
 
-    fat16_lba = 0x0E,
+    .{ "fat32-chs", 0x0B },
+    .{ "fat32-lba", 0x0C },
 
-    linux_swap = 0x82,
-    linux_fs = 0x83,
-    linux_lvm = 0x8E,
+    .{ "fat16-lba", 0x0E },
 
-    // Output from fdisk (util-linux 2.38.1)
-    // 00 Leer             27 Verst. NTFS Win  82 Linux Swap / So  c1 DRDOS/sec (FAT-
-    // 01 FAT12            39 Plan 9           83 Linux            c4 DRDOS/sec (FAT-
-    // 02 XENIX root       3c PartitionMagic   84 versteckte OS/2  c6 DRDOS/sec (FAT-
-    // 03 XENIX usr        40 Venix 80286      85 Linux erweitert  c7 Syrinx
-    // 04 FAT16 <32M       41 PPC PReP Boot    86 NTFS Datenträge  da Keine Dateisyst
-    // 05 Erweiterte       42 SFS              87 NTFS Datenträge  db CP/M / CTOS / .
-    // 06 FAT16            4d QNX4.x           88 Linux Klartext   de Dell Dienstprog
-    // 07 HPFS/NTFS/exFAT  4e QNX4.x 2. Teil   8e Linux LVM        df BootIt
-    // 08 AIX              4f QNX4.x 3. Teil   93 Amoeba           e1 DOS-Zugriff
-    // 09 AIX bootfähig    50 OnTrack DM       94 Amoeba BBT       e3 DOS R/O
-    // 0a OS/2-Bootmanage  51 OnTrack DM6 Aux  9f BSD/OS           e4 SpeedStor
-    // 0b W95 FAT32        52 CP/M             a0 IBM Thinkpad Ru  ea Linux erweitert
-    // 0c W95 FAT32 (LBA)  53 OnTrack DM6 Aux  a5 FreeBSD          eb BeOS Dateisyste
-    // 0e W95 FAT16 (LBA)  54 OnTrackDM6       a6 OpenBSD          ee GPT
-    // 0f W95 Erw. (LBA)   55 EZ-Drive         a7 NeXTSTEP         ef EFI (FAT-12/16/
-    // 10 OPUS             56 Golden Bow       a8 Darwin UFS       f0 Linux/PA-RISC B
-    // 11 Verst. FAT12     5c Priam Edisk      a9 NetBSD           f1 SpeedStor
-    // 12 Compaq Diagnost  61 SpeedStor        ab Darwin Boot      f4 SpeedStor
-    // 14 Verst. FAT16 <3  63 GNU HURD oder S  af HFS / HFS+       f2 DOS sekundär
-    // 16 Verst. FAT16     64 Novell Netware   b7 BSDi Dateisyste  f8 EBBR geschützt
-    // 17 Verst. HPFS/NTF  65 Novell Netware   b8 BSDI Swap        fb VMware VMFS
-    // 18 AST SmartSleep   70 DiskSecure Mult  bb Boot-Assistent   fc VMware VMKCORE
-    // 1b Verst. W95 FAT3  75 PC/IX            bc Acronis FAT32 L  fd Linux RAID-Auto
-    // 1c Verst. W95 FAT3  80 Altes Minix      be Solaris Boot     fe LANstep
-    // 1e Verst. W95 FAT1  81 Minix / altes L  bf Solaris          ff BBT
-    // 24 NEC DOS
-
-    _,
-};
+    .{ "linux-swap", 0x82 },
+    .{ "linux-fs", 0x83 },
+    .{ "linux-lvm", 0x8E },
+});
 
 pub fn encodeMbrChsEntry(lba: u32) [3]u8 {
     var chs = lbaToChs(lba);
