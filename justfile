@@ -8,7 +8,7 @@ default: install test
 install:
     {{zig}} build install
 
-test: unit-test behaviour-tests
+test: unit-test behaviour-tests build-test
 
 unit-test:
     {{zig}} build test
@@ -29,10 +29,15 @@ behaviour-tests: \
 
 behaviour-test script: install
     @mkdir -p {{ join(out, parent_directory(script)) }}
-    ./zig-out/bin/dim --output {{ join(out, without_extension(script) + ".img") }} --script "{{script}}" --size 33M
-    ./zig-out/bin/dim --output {{ join(out, without_extension(script) + ".img") }} --deps-file {{ join(out, without_extension(script) + ".d") }} --script "{{script}}" --size 33M
+    ./zig-out/bin/dimmer --output {{ join(out, without_extension(script) + ".img") }} --script "{{script}}" --size 33M
+    ./zig-out/bin/dimmer --output {{ join(out, without_extension(script) + ".img") }} --deps-file {{ join(out, without_extension(script) + ".d") }} --script "{{script}}" --size 33M
 
 # TODO(fqu):  sfdisk --json .dim-out/tests/part/mbr/basic-single-part-unsized.img
+
+
+[working-directory: 'tests/zig-build-interface']
+build-test:
+    {{zig}} build
 
 fuzz:
     {{zig}} build install test --fuzz --port 35991

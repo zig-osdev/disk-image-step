@@ -1,0 +1,13 @@
+.{
+    .name = .dimmer_usage_demo,
+    .fingerprint = 0x6a630b1cfa8384c,
+    .version = "1.0.0",
+    .dependencies = .{
+        .dimmer = .{
+            .path = "../..",
+        },
+    },
+    .paths = .{
+        ".",
+    },
+}

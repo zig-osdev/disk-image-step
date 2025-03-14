@@ -1,5 +1,6 @@
 const std = @import("std");
-const builtin = @import("builtin");
+
+pub const BuildInterface = @import("src/BuildInterface.zig");
 
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
@@ -34,7 +35,7 @@ pub fn build(b: *std.Build) void {
     dim_mod.addImport("zfat", zfat_mod);
 
     const dim_exe = b.addExecutable(.{
-        .name = "dim",
+        .name = "dimmer",
         .root_module = dim_mod,
     });
     b.installArtifact(dim_exe);

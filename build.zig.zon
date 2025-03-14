@@ -1,7 +1,7 @@
 .{
-    .name = .disk_image_step,
+    .name = .dimmer,
     .version = "2.0.0",
-    .fingerprint = 0xdaabde74a06664f7,
+    .fingerprint = 0x9947018c924eecb2,
     .dependencies = .{
         .zfat = .{
             .url = "https://github.com/ZigEmbeddedGroup/zfat/archive/3ce06d43a4e04d387034dcae2f486b050701f321.tar.gz",
