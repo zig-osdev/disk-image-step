@@ -2,10 +2,21 @@
 //! Disk Imager Command Line
 //!
 const std = @import("std");
+const builtin = @import("builtin");
 
 const Tokenizer = @import("Tokenizer.zig");
 const Parser = @import("Parser.zig");
 const args = @import("args");
+
+pub const std_options: std.Options = .{
+    .log_level = if (builtin.mode == .Debug)
+        .debug
+    else
+        .info,
+    .log_scope_levels = &.{
+        .{ .scope = .fatfs, .level = .info },
+    },
+};
 
 comptime {
     // Ensure zfat is linked to prevent compiler errors!
@@ -169,8 +180,11 @@ pub fn main() !u8 {
 pub fn declare_file_dependency(path: []const u8) !void {
     const deps_file = global_deps_file orelse return;
 
-    try deps_file.writeAll(" \\\n    ");
-    try deps_file.writeAll(path);
+    const stat = try std.fs.cwd().statFile(path);
+    if (stat.kind != .directory) {
+        try deps_file.writeAll(" \\\n    ");
+        try deps_file.writeAll(path);
+    }
 }
 
 fn fatal(msg: []const u8) noreturn {
