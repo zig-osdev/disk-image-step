@@ -1,0 +1,18 @@
+mbr-part
+    bootloader empty
+    part # partition 1
+        type fat16-lba
+        contains vfat fat16
+            label "BOOT"
+        endfat
+        size 10M
+    endpart
+    part # partition 2
+        type fat16-lba
+        contains vfat fat16
+            label "OS"
+            !include "../../data/rootfs.dis"
+        endfat
+    endpart
+    ignore # partition 3
+    ignore # partition 4

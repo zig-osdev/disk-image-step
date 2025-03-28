@@ -1,0 +1,4 @@
+vfat fat32 
+    label "Demo FS"
+    !include ../../data/rootfs.dis
+endfat

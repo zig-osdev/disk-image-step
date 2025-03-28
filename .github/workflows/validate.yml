@@ -16,12 +16,12 @@ jobs:
       - name: Setup Zig
         uses: mlugg/setup-zig@v1
         with:
-          version: 0.14.0-dev.3020+c104e8644
+          version: 0.14.0
 
       - name: Basic Build
         run: |
           zig build
 
-      - name: Compile and run demo
+      - name: Compile and run tests
         run: |
-          zig build install debug
+          zig build test
