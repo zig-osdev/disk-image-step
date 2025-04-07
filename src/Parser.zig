@@ -462,6 +462,7 @@ fn fuzz_parser(_: void, input: []const u8) !void {
             error.InvalidSourceEncoding,
             error.BadStringLiteral,
             error.BadEscapeSequence,
+            error.InvalidEscapeSequence,
             => return,
         };
         if (res == null)
