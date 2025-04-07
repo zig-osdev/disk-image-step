@@ -17,6 +17,7 @@ pub const Error = Tokenizer.Error || error{
     ExpectedIncludePath,
     UnknownDirective,
     OutOfMemory,
+    InvalidEscapeSequence,
 };
 
 pub const IO = struct {
@@ -197,11 +198,55 @@ fn resolve_value(parser: *Parser, token_type: TokenType, text: []const u8) ![]co
         ),
 
         .string => {
-            for (text) |c| {
+            const content_slice = text[1 .. text.len - 1];
+
+            const has_includes = for (content_slice) |c| {
                 if (c == '\\')
-                    @panic("strings escapes not supported yet!");
+                    break true;
+            } else false;
+
+            if (!has_includes)
+                return content_slice;
+
+            var unescaped: std.ArrayList(u8) = .init(parser.arena.allocator());
+            defer unescaped.deinit();
+
+            try unescaped.ensureTotalCapacityPrecise(content_slice.len);
+
+            {
+                var i: usize = 0;
+                while (i < content_slice.len) {
+                    const c = content_slice[i];
+                    i += 1;
+
+                    if (c != '\\') {
+                        try unescaped.append(c);
+                        continue;
+                    }
+
+                    if (i == content_slice.len)
+                        return error.InvalidEscapeSequence;
+
+                    const esc_code = content_slice[i];
+                    i += 1;
+
+                    errdefer std.log.err("invalid escape sequence: \\{s}", .{[_]u8{esc_code}});
+
+                    switch (esc_code) {
+                        'r' => try unescaped.append('\r'),
+                        'n' => try unescaped.append('\n'),
+                        't' => try unescaped.append('\t'),
+                        '\\' => try unescaped.append('\\'),
+                        '\"' => try unescaped.append('\"'),
+                        '\'' => try unescaped.append('\''),
+                        'e' => try unescaped.append('\x1B'),
+
+                        else => return error.InvalidEscapeSequence,
+                    }
+                }
             }
-            return text[1 .. text.len - 1];
+
+            return try unescaped.toOwnedSlice();
         },
 
         .comment, .directive, .whitespace => unreachable,

@@ -180,7 +180,10 @@ pub fn main() !u8 {
 pub fn declare_file_dependency(path: []const u8) !void {
     const deps_file = global_deps_file orelse return;
 
-    const stat = try std.fs.cwd().statFile(path);
+    const stat = std.fs.cwd().statFile(path) catch |err| switch (err) {
+        error.IsDir => return,
+        else => |e| return e,
+    };
     if (stat.kind != .directory) {
         try deps_file.writeAll(" \\\n    ");
         try deps_file.writeAll(path);
@@ -549,8 +552,8 @@ pub const FileName = struct {
         const realpath = name.root_dir.realpath(
             name.rel_path,
             &buffer,
-        ) catch @panic("failed to determine real path for dependency file!");
-        declare_file_dependency(realpath) catch @panic("Failed to write to deps file!");
+        ) catch |e| std.debug.panic("failed to determine real path for dependency file: {s}", .{@errorName(e)});
+        declare_file_dependency(realpath) catch |e| std.debug.panic("Failed to write to deps file: {s}", .{@errorName(e)});
     }
 
     pub const GetSizeError = error{ FileNotFound, InvalidPath, IoError };

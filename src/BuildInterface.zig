@@ -157,7 +157,7 @@ const ContentWriter = struct {
                     @tagName(data.format),
                 });
                 if (data.label) |label| {
-                    try cw.code.print("  label \"{}\"\n", .{
+                    try cw.code.print("  label {}\n", .{
                         fmtPath(label),
                     });
                 }
@@ -172,16 +172,16 @@ const ContentWriter = struct {
     fn renderFileSystemTree(cw: ContentWriter, fs: FileSystem) !void {
         for (fs.items) |item| {
             switch (item) {
-                .empty_dir => |dir| try cw.code.print("mkdir \"{}\"\n", .{
+                .empty_dir => |dir| try cw.code.print("mkdir {}\n", .{
                     fmtPath(dir),
                 }),
 
-                .copy_dir => |copy| try cw.code.print("copy-dir \"{}\" {}\n", .{
+                .copy_dir => |copy| try cw.code.print("copy-dir {} {}\n", .{
                     fmtPath(copy.destination),
                     cw.fmtLazyPath(copy.source, .directory),
                 }),
 
-                .copy_file => |copy| try cw.code.print("copy-file \"{}\" {}\n", .{
+                .copy_file => |copy| try cw.code.print("copy-file {} {}\n", .{
                     fmtPath(copy.destination),
                     cw.fmtLazyPath(copy.source, .file),
                 }),
@@ -226,7 +226,7 @@ const ContentWriter = struct {
 
                 std.debug.assert(std.fs.path.isAbsolute(full_path));
 
-                try writer.print("\"{}\"", .{
+                try writer.print("{}", .{
                     fmtPath(full_path),
                 });
             },
@@ -271,9 +271,17 @@ const ContentWriter = struct {
         if (is_safe_word) {
             try writer.writeAll(path);
         } else {
-            try writer.print("\"{}\"", .{
-                std.fmt.fmtSliceEscapeLower(path),
-            });
+            try writer.writeAll("\"");
+
+            for (path) |c| {
+                if (c == '\\') {
+                    try writer.writeAll("/");
+                } else {
+                    try writer.print("{}", .{std.zig.fmtEscapes(&[_]u8{c})});
+                }
+            }
+
+            try writer.writeAll("\"");
         }
     }
 };
