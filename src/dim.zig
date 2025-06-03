@@ -198,7 +198,7 @@ fn fatal(msg: []const u8) noreturn {
 
 const content_types: []const struct { []const u8, type } = &.{
     .{ "mbr-part", @import("components/part/MbrPartitionTable.zig") },
-    // .{ "gpt-part", @import("components/part/GptPartitionTable.zig") },
+    .{ "gpt-part", @import("components/part/GptPartitionTable.zig") },
     .{ "vfat", @import("components/fs/FatFileSystem.zig") },
     .{ "paste-file", @import("components/PasteFile.zig") },
     .{ "empty", @import("components/EmptyData.zig") },
@@ -747,6 +747,7 @@ pub const BinaryStream = struct {
                     error.DeviceBusy,
                     error.InvalidArgument,
                     error.AccessDenied,
+                    error.PermissionDenied,
                     error.BrokenPipe,
                     error.SystemResources,
                     error.OperationAborted,

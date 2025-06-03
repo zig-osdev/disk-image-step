@@ -109,7 +109,23 @@ A complete list can be [found on Wikipedia](https://en.wikipedia.org/wiki/Partit
 ### GPT Partition Table (`gpt-part`)
 
 ```plain
+gpt-part
+    [disk-id <guid>] # optional, random guid used
+    [part <…>] # partition 1
+    [part <…>] # partition 2
+    […] # up to 128 partitions total
+endgpt
+```
 
+```plain
+part
+    type <type-id|guid>
+    [part-id <guid>] # optional, random guid used
+    [size <bytes>]
+    [offset <bytes>]
+    [name <string>]
+    contains <content>
+endpart
 ```
 
 ### FAT File System (`vfat`)

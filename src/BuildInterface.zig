@@ -152,6 +152,40 @@ const ContentWriter = struct {
                 }
             },
 
+            .gpt_part_table => |data| {
+                try cw.code.writeAll("gpt-part\n");
+
+                for (data.partitions) |part| {
+                    try cw.code.writeAll("  part\n");
+                    try cw.code.writeAll("    type ");
+                    switch (part.type) {
+                        .name => |name| {
+                            try cw.code.writeAll(@tagName(name));
+                        },
+                        .guid => |guid_text| {
+                            try cw.code.writeAll(&guid_text);
+                        },
+                    }
+                    try cw.code.writeByte('\n');
+
+                    if (part.name) |name| {
+                        try cw.code.print("    name {s}\n", .{name});
+                    }
+                    if (part.offset) |offset| {
+                        try cw.code.print("    offset {d}\n", .{offset});
+                    }
+                    if (part.size) |size| {
+                        try cw.code.print("    size {d}\n", .{size});
+                    }
+                    try cw.code.writeAll("    contains");
+                    try cw.render(part.data);
+                    try cw.code.writeAll("\n");
+                    try cw.code.writeAll("  endpart\n");
+                }
+
+                try cw.code.writeAll("endgpt");
+            },
+
             .vfat => |data| {
                 try cw.code.print("vfat {s}\n", .{
                     @tagName(data.format),
@@ -291,6 +325,7 @@ pub const Content = union(enum) {
     fill: u8,
     paste_file: std.Build.LazyPath,
     mbr_part_table: MbrPartTable,
+    gpt_part_table: GptPartTable,
     vfat: FatFs,
 };
 
@@ -311,6 +346,24 @@ pub const MbrPartTable = struct {
             @"linux-lvm",
         },
         bootable: bool = false,
+        size: ?u64 = null,
+        offset: ?u64 = null,
+        data: Content,
+    };
+};
+
+pub const GptPartTable = struct {
+    partitions: []const Partition,
+
+    pub const Partition = struct {
+        type: union(enum) {
+            name: enum {
+                unused,
+                @"efi-system",
+            },
+            guid: [36]u8,
+        },
+        name: ?[]const u8 = null,
         size: ?u64 = null,
         offset: ?u64 = null,
         data: Content,
