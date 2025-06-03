@@ -151,11 +151,19 @@ pub fn render(table: *PartTable, stream: *dim.BinaryStream) dim.Content.RenderEr
     const max_partition_lba = secondary_pe_array_lba - 1;
 
     // create the partition entry array, lba 2 through 33
-    var pe_blocks: [block_size * 32]u8 = @splat(0);
-    const partition_entries = std.mem.bytesAsSlice([0x80]u8, &pe_blocks);
+    var pe_block: [0x80]u8 = undefined;
+    var pe_crc: std.hash.Crc32 = .init();
 
-    var next_lba: u64 = 34;
-    for (table.partitions[0..], partition_entries[0..table.partitions.len], 0..) |partition, *entry, i| {
+    var pe_ofs: usize = 0;
+
+    var next_lba: u64 = 2 + (std.math.divCeil(u64, table.partitions.len * 0x80, block_size) catch |e| switch (e) {
+        error.DivisionByZero => unreachable,
+        inline else => |e2| return e2,
+    });
+    const pe_end_plus_one_lba = next_lba;
+    for (table.partitions[0..], 0..) |partition, i| {
+        @memset(&pe_block, 0);
+
         const offset = partition.offset orelse next_lba * block_size;
         const size = partition.size orelse if (i == table.partitions.len - 1)
             ((max_partition_lba + 1) * block_size) - offset
@@ -175,8 +183,8 @@ pub fn render(table: *PartTable, stream: *dim.BinaryStream) dim.Content.RenderEr
         const start_lba = @divExact(offset, block_size);
         const end_lba = @divExact(size + offset, block_size) - 1;
 
-        if (start_lba <= 33) {
-            std.log.err("partition {} overlaps with gpt. the partition begins at lba {}, and the gpt ends at {}", .{ i + 1, start_lba, 33 });
+        if (start_lba <= pe_end_plus_one_lba) {
+            std.log.err("partition {} overlaps with gpt. the partition begins at lba {}, and the gpt ends at {}", .{ i + 1, start_lba, pe_end_plus_one_lba });
             return error.ConfigurationError;
         }
 
@@ -185,18 +193,25 @@ pub fn render(table: *PartTable, stream: *dim.BinaryStream) dim.Content.RenderEr
             return error.ConfigurationError;
         }
 
-        entry[0x00..0x10].* = @bitCast(partition.type);
-        entry[0x10..0x20].* = @bitCast(partition.part_id orelse Guid.rand(random));
-        std.mem.writeInt(u64, entry[0x20..0x28], start_lba, .little);
-        std.mem.writeInt(u64, entry[0x28..0x30], end_lba, .little);
+        pe_block[0x00..0x10].* = @bitCast(partition.type);
+        (partition.part_id orelse Guid.rand(random)).write(pe_block[0x10..0x20]);
+        std.mem.writeInt(u64, pe_block[0x20..0x28], start_lba, .little);
+        std.mem.writeInt(u64, pe_block[0x28..0x30], end_lba, .little);
         // TODO attributes
-        entry[0x38..].* = @bitCast(partition.name);
+        pe_block[0x38..].* = @bitCast(partition.name);
+
+        pe_crc.update(&pe_block);
+        try stream.write(block_size * 2 + pe_ofs, &pe_block);
+        try stream.write(block_size * secondary_pe_array_lba + pe_ofs, &pe_block);
 
         var sub_view = try stream.slice(offset, size);
         try partition.contains.render(&sub_view);
 
         next_lba = end_lba + 1;
+        pe_ofs += 0x80;
     }
+
+    const pe_array_crc32 = pe_crc.final();
 
     // create the protective mbr
     var mbr: MbrPartTable = .{
@@ -221,7 +236,7 @@ pub fn render(table: *PartTable, stream: *dim.BinaryStream) dim.Content.RenderEr
     std.mem.writeInt(u64, gpt_header[0x20..0x28], secondary_pth_lba, .little); // LBA of other header
     std.mem.writeInt(u64, gpt_header[0x28..0x30], 34, .little); // First usable LBA
     std.mem.writeInt(u64, gpt_header[0x30..0x38], max_partition_lba, .little); // Last usable LBA
-    gpt_header[0x38..0x48].* = @bitCast(table.disk_id orelse Guid.rand(random));
+    (table.disk_id orelse Guid.rand(random)).write(gpt_header[0x38..0x48]);
     std.mem.writeInt(u64, gpt_header[0x48..0x50], 2, .little); // First LBA of the partition entry array
     std.mem.writeInt(u32, gpt_header[0x50..0x54], 0x80, .little); // Number of partition entries
     std.mem.writeInt(u32, gpt_header[0x54..0x58], 0x80, .little); // Size of a partition entry
@@ -233,7 +248,6 @@ pub fn render(table: *PartTable, stream: *dim.BinaryStream) dim.Content.RenderEr
     std.mem.writeInt(u64, backup_gpt_header[0x20..0x28], 1, .little); // LBA of other header
     std.mem.writeInt(u64, backup_gpt_header[0x48..0x50], secondary_pe_array_lba, .little); // First LBA of the backup partition entry array
 
-    const pe_array_crc32 = std.hash.Crc32.hash(&pe_blocks);
     std.mem.writeInt(u32, gpt_header[0x58..0x5c], pe_array_crc32, .little); // CRC32 of partition entries array
     std.mem.writeInt(u32, backup_gpt_header[0x58..0x5c], pe_array_crc32, .little); // CRC32 of partition entries array
 
@@ -246,16 +260,7 @@ pub fn render(table: *PartTable, stream: *dim.BinaryStream) dim.Content.RenderEr
     // write everything we generated to disk
     try mbr.render(stream);
     try stream.write(block_size, &gpt_header_block);
-    try stream.write(block_size * 2, &pe_blocks);
-    try stream.write(block_size * secondary_pe_array_lba, &pe_blocks);
     try stream.write(block_size * secondary_pth_lba, &backup_gpt_header_block);
-}
-
-fn crc32Header(header: [0x5c]u8) u32 {
-    var crc32 = std.hash.Crc32.init();
-    crc32.update(header[0x00..0x14]);
-    crc32.update(header[0x18..]);
-    return crc32.final();
 }
 
 pub const Guid = extern struct {
@@ -282,6 +287,8 @@ pub const Guid = extern struct {
     }
 
     pub fn parse(str: [36]u8) !Guid {
+        @setEvalBranchQuota(16384);
+
         const tl_hex = str[0..8];
         if (str[8] != '-') return error.MissingSeparator;
         const tm_hex = str[9..13];
@@ -292,48 +299,37 @@ pub const Guid = extern struct {
         if (str[23] != '-') return error.MissingSeparator;
         const node_hex = str[24..36];
 
-        const tl_be: u32 = @bitCast(try hexToBytes(tl_hex.*));
-        const tm_be: u16 = @bitCast(try hexToBytes(tm_hex.*));
-        const th_be: u16 = @bitCast(try hexToBytes(th_hex.*));
-        const cs_bytes = try hexToBytes(cs_hex.*);
-        const node_bytes = try hexToBytes(node_hex.*);
+        const tl: u32 = try std.fmt.parseInt(u32, tl_hex, 16);
+        const tm: u16 = try std.fmt.parseInt(u16, tm_hex, 16);
+        const th: u16 = try std.fmt.parseInt(u16, th_hex, 16);
+        const cs: u16 = try std.fmt.parseInt(u16, cs_hex, 16);
+        const node: u48 = try std.fmt.parseInt(u48, node_hex, 16);
 
-        const tl_le = @byteSwap(tl_be);
-        const tm_le = @byteSwap(tm_be);
-        const th_le = @byteSwap(th_be);
+        var cs_bytes: [2]u8 = undefined;
+        std.mem.writeInt(u16, &cs_bytes, cs, .big);
+        var node_bytes: [6]u8 = undefined;
+        std.mem.writeInt(u48, &node_bytes, node, .big);
+
         const csh = cs_bytes[0];
         const csl = cs_bytes[1];
 
         return Guid{
-            .time_low = tl_le,
-            .time_mid = tm_le,
-            .time_high_and_version = th_le,
+            .time_low = tl,
+            .time_mid = tm,
+            .time_high_and_version = th,
             .clock_seq_high_and_reserved = csh,
             .clock_seq_low = csl,
             .node = node_bytes,
         };
     }
 
-    fn HexToBytesType(comptime T: type) type {
-        const ti = @typeInfo(T);
-        const len = @divExact(ti.array.len, 2);
-        return @Type(.{ .array = .{
-            .len = len,
-            .child = u8,
-            .sentinel_ptr = null,
-        } });
-    }
-
-    fn hexToBytes(hex: anytype) !HexToBytesType(@TypeOf(hex)) {
-        var ret: [@divExact(hex.len, 2)]u8 = undefined;
-
-        for (0..ret.len) |i| {
-            const hi = try std.fmt.charToDigit(hex[i * 2], 16);
-            const lo = try std.fmt.charToDigit(hex[i * 2 + 1], 16);
-            ret[i] = (hi << 4) | lo;
-        }
-
-        return ret;
+    pub fn write(guid: Guid, buf: *[16]u8) void {
+        std.mem.writeInt(u32, buf[0..4], guid.time_low, .little);
+        std.mem.writeInt(u16, buf[4..6], guid.time_mid, .little);
+        std.mem.writeInt(u16, buf[6..8], guid.time_high_and_version, .little);
+        buf[8] = guid.clock_seq_high_and_reserved;
+        buf[9] = guid.clock_seq_low;
+        buf[10..16].* = guid.node;
     }
 };
 
@@ -364,33 +360,23 @@ pub const Partition = struct {
 // TODO fill from https://en.wikipedia.org/wiki/GUID_Partition_Table#Partition_type_GUIDs
 pub const known_types = std.StaticStringMap(Guid).initComptime(.{
     .{ "unused", Guid.parse("00000000-0000-0000-0000-000000000000".*) catch unreachable },
-    .{ "efi-system", Guid.parse("C12A7328-F81F-11D2-BA4B-00A0C93EC93B".*) catch unreachable },
+
+    .{ "esp", Guid.parse("C12A7328-F81F-11D2-BA4B-00A0C93EC93B".*) catch unreachable },
+    .{ "legacy_mbr", Guid.parse("024DEE41-33E7-11D3-9D69-0008C781F39F".*) catch unreachable },
+    .{ "bios_boot", Guid.parse("21686148-6449-6E6F-744E-656564454649".*) catch unreachable },
+
+    .{ "microsoft_basic_data", Guid.parse("EBD0A0A2-B9E5-4433-87C0-68B6B72699C7".*) catch unreachable },
+    .{ "microsoft_reserved", Guid.parse("E3C9E316-0B5C-4DB8-817D-F92DF00215AE".*) catch unreachable },
+
+    .{ "windows_recovery", Guid.parse("DE94BBA4-06D1-4D40-A16A-BFD50179D6AC".*) catch unreachable },
+
+    .{ "plan9", Guid.parse("C91818F9-8025-47AF-89D2-F030D7000C2C".*) catch unreachable },
+
+    .{ "linux_swap", Guid.parse("0657FD6D-A4AB-43C4-84E5-0933C84B4F4F".*) catch unreachable },
+    .{ "linux_fs", Guid.parse("0FC63DAF-8483-4772-8E79-3D69D8477DE4".*) catch unreachable },
+    .{ "linux_reserved", Guid.parse("8DA63339-0007-60C0-C436-083AC8230908".*) catch unreachable },
+    .{ "linux_lvm", Guid.parse("E6D6D379-F507-44C2-A23C-238F2A3DF928".*) catch unreachable },
 });
-
-// struct {
-//     pub const unused: Guid = .{};
-
-//     pub const microsoft_basic_data: Guid = .{};
-//     pub const microsoft_reserved: Guid = .{};
-
-//     pub const windows_recovery: Guid = .{};
-
-//     pub const plan9: Guid = .{};
-
-//     pub const linux_swap: Guid = .{};
-//     pub const linux_fs: Guid = .{};
-//     pub const linux_reserved: Guid = .{};
-//     pub const linux_lvm: Guid = .{};
-// };
-
-pub fn nameLiteral(comptime name: []const u8) [36]u16 {
-    return comptime blk: {
-        var buf: [36]u16 = undefined;
-        const len = std.unicode.utf8ToUtf16Le(&buf, name) catch |err| @compileError(@tagName(err));
-        @memset(buf[len..], 0);
-        break :blk &buf;
-    };
-}
 
 pub fn stringToName(name: []const u8) ![36]u16 {
     var buf: [36]u16 = @splat(0);

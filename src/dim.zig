@@ -747,7 +747,6 @@ pub const BinaryStream = struct {
                     error.DeviceBusy,
                     error.InvalidArgument,
                     error.AccessDenied,
-                    error.PermissionDenied,
                     error.BrokenPipe,
                     error.SystemResources,
                     error.OperationAborted,
