@@ -361,21 +361,21 @@ pub const Partition = struct {
 pub const known_types = std.StaticStringMap(Guid).initComptime(.{
     .{ "unused", Guid.parse("00000000-0000-0000-0000-000000000000".*) catch unreachable },
 
-    .{ "esp", Guid.parse("C12A7328-F81F-11D2-BA4B-00A0C93EC93B".*) catch unreachable },
-    .{ "legacy_mbr", Guid.parse("024DEE41-33E7-11D3-9D69-0008C781F39F".*) catch unreachable },
-    .{ "bios_boot", Guid.parse("21686148-6449-6E6F-744E-656564454649".*) catch unreachable },
+    .{ "efi-system", Guid.parse("C12A7328-F81F-11D2-BA4B-00A0C93EC93B".*) catch unreachable },
+    .{ "legacy-mbr", Guid.parse("024DEE41-33E7-11D3-9D69-0008C781F39F".*) catch unreachable },
+    .{ "bios-boot", Guid.parse("21686148-6449-6E6F-744E-656564454649".*) catch unreachable },
 
-    .{ "microsoft_basic_data", Guid.parse("EBD0A0A2-B9E5-4433-87C0-68B6B72699C7".*) catch unreachable },
-    .{ "microsoft_reserved", Guid.parse("E3C9E316-0B5C-4DB8-817D-F92DF00215AE".*) catch unreachable },
+    .{ "microsoft-basic-data", Guid.parse("EBD0A0A2-B9E5-4433-87C0-68B6B72699C7".*) catch unreachable },
+    .{ "microsoft-reserved", Guid.parse("E3C9E316-0B5C-4DB8-817D-F92DF00215AE".*) catch unreachable },
 
-    .{ "windows_recovery", Guid.parse("DE94BBA4-06D1-4D40-A16A-BFD50179D6AC".*) catch unreachable },
+    .{ "windows-recovery", Guid.parse("DE94BBA4-06D1-4D40-A16A-BFD50179D6AC".*) catch unreachable },
 
     .{ "plan9", Guid.parse("C91818F9-8025-47AF-89D2-F030D7000C2C".*) catch unreachable },
 
-    .{ "linux_swap", Guid.parse("0657FD6D-A4AB-43C4-84E5-0933C84B4F4F".*) catch unreachable },
-    .{ "linux_fs", Guid.parse("0FC63DAF-8483-4772-8E79-3D69D8477DE4".*) catch unreachable },
-    .{ "linux_reserved", Guid.parse("8DA63339-0007-60C0-C436-083AC8230908".*) catch unreachable },
-    .{ "linux_lvm", Guid.parse("E6D6D379-F507-44C2-A23C-238F2A3DF928".*) catch unreachable },
+    .{ "linux-swap", Guid.parse("0657FD6D-A4AB-43C4-84E5-0933C84B4F4F".*) catch unreachable },
+    .{ "linux-fs", Guid.parse("0FC63DAF-8483-4772-8E79-3D69D8477DE4".*) catch unreachable },
+    .{ "linux-reserved", Guid.parse("8DA63339-0007-60C0-C436-083AC8230908".*) catch unreachable },
+    .{ "linux-lvm", Guid.parse("E6D6D379-F507-44C2-A23C-238F2A3DF928".*) catch unreachable },
 });
 
 pub fn stringToName(name: []const u8) ![36]u16 {
