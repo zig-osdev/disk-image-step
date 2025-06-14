@@ -7,6 +7,7 @@ const PartTable = @This();
 const block_size = 512; // TODO support other block sizes
 
 disk_id: ?Guid,
+legacy_bootable: bool = false,
 partitions: []Partition,
 
 pub fn parse(ctx: dim.Context) !dim.Content {
@@ -22,6 +23,7 @@ pub fn parse(ctx: dim.Context) !dim.Content {
             guid,
             part,
             endgpt,
+            @"legacy-bootable",
         });
         switch (kw) {
             .guid => {
@@ -33,6 +35,7 @@ pub fn parse(ctx: dim.Context) !dim.Content {
                     return ctx.report_fatal_error("Invalid disk GUID: {}", .{err});
             },
             .part => (try partitions.addOne()).* = try parsePartition(ctx),
+            .@"legacy-bootable" => pt.legacy_bootable = true,
             .endgpt => break :loop,
         }
     }
@@ -220,7 +223,7 @@ pub fn render(table: *PartTable, stream: *dim.BinaryStream) dim.Content.RenderEr
         .partitions = .{ .{
             .offset = block_size,
             .size = null,
-            .bootable = false,
+            .bootable = table.legacy_bootable,
             .type = 0xee,
             .contains = .empty,
         }, null, null, null },

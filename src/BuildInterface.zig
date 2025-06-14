@@ -155,6 +155,10 @@ const ContentWriter = struct {
             .gpt_part_table => |data| {
                 try cw.code.writeAll("gpt-part\n");
 
+                if(data.legacy_bootable) {
+                    try cw.code.writeAll("  legacy-bootable\n");
+                }
+
                 for (data.partitions) |part| {
                     try cw.code.writeAll("  part\n");
                     try cw.code.writeAll("    type ");
@@ -353,6 +357,7 @@ pub const MbrPartTable = struct {
 };
 
 pub const GptPartTable = struct {
+    legacy_bootable: bool = false,
     partitions: []const Partition,
 
     pub const Partition = struct {
