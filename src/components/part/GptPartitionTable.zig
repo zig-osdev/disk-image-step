@@ -238,7 +238,7 @@ pub fn render(table: *PartTable, stream: *dim.BinaryStream) dim.Content.RenderEr
     std.mem.writeInt(u64, gpt_header[0x30..0x38], max_partition_lba, .little); // Last usable LBA
     (table.disk_id orelse Guid.rand(random)).write(gpt_header[0x38..0x48]);
     std.mem.writeInt(u64, gpt_header[0x48..0x50], 2, .little); // First LBA of the partition entry array
-    std.mem.writeInt(u32, gpt_header[0x50..0x54], 0x80, .little); // Number of partition entries
+    std.mem.writeInt(u32, gpt_header[0x50..0x54], @intCast(table.partitions.len), .little); // Number of partition entries
     std.mem.writeInt(u32, gpt_header[0x54..0x58], 0x80, .little); // Size of a partition entry
 
     var backup_gpt_header_block: [block_size]u8 = gpt_header_block;
