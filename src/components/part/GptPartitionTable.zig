@@ -159,15 +159,15 @@ pub fn render(table: *PartTable, stream: *dim.BinaryStream) dim.Content.RenderEr
 
     var pe_ofs: usize = 0;
 
-    var next_lba: u64 = 2 + (std.math.divCeil(u64, table.partitions.len * 0x80, block_size) catch |e| switch (e) {
-        error.DivisionByZero => unreachable,
-        inline else => |e2| return e2,
-    });
-    const pe_end_plus_one_lba = next_lba;
+    if (table.partitions.len > 0x80) {
+        std.log.err("gpt with {} (> 128) partitions is not supported by most implementations", .{table.partitions.len});
+    }
+
+    const pe_end_plus_one_lba = 33;
     for (table.partitions[0..], 0..) |partition, i| {
         @memset(&pe_block, 0);
 
-        const offset = partition.offset orelse next_lba * block_size;
+        const offset = partition.offset orelse 33 * block_size;
         const size = partition.size orelse if (i == table.partitions.len - 1)
             ((max_partition_lba + 1) * block_size) - offset
         else
@@ -210,8 +210,17 @@ pub fn render(table: *PartTable, stream: *dim.BinaryStream) dim.Content.RenderEr
         var sub_view = try stream.slice(offset, size);
         try partition.contains.render(&sub_view);
 
-        next_lba = end_lba + 1;
         pe_ofs += 0x80;
+    }
+    if (table.partitions.len < 0x80) {
+        @branchHint(.likely);
+        @memset(&pe_block, 0);
+        for (table.partitions.len..0x80) |_| {
+            pe_crc.update(&pe_block);
+            try stream.write(block_size * 2 + pe_ofs, &pe_block);
+            try stream.write(block_size * secondary_pe_array_lba + pe_ofs, &pe_block);
+            pe_ofs += 0x80;
+        }
     }
 
     const pe_array_crc32 = pe_crc.final();
@@ -241,7 +250,7 @@ pub fn render(table: *PartTable, stream: *dim.BinaryStream) dim.Content.RenderEr
     std.mem.writeInt(u64, gpt_header[0x30..0x38], max_partition_lba, .little); // Last usable LBA
     (table.disk_id orelse Guid.rand(random)).write(gpt_header[0x38..0x48]);
     std.mem.writeInt(u64, gpt_header[0x48..0x50], 2, .little); // First LBA of the partition entry array
-    std.mem.writeInt(u32, gpt_header[0x50..0x54], @intCast(table.partitions.len), .little); // Number of partition entries
+    std.mem.writeInt(u32, gpt_header[0x50..0x54], 0x80, .little); // Number of partition entries
     std.mem.writeInt(u32, gpt_header[0x54..0x58], 0x80, .little); // Size of a partition entry
 
     var backup_gpt_header_block: [block_size]u8 = gpt_header_block;
