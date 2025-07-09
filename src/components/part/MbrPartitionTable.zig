@@ -134,7 +134,7 @@ fn parse_partition(ctx: dim.Context) !Partition {
     return part;
 }
 
-fn render(table: *PartTable, stream: *dim.BinaryStream) dim.Content.RenderError!void {
+pub fn render(table: *PartTable, stream: *dim.BinaryStream) dim.Content.RenderError!void {
     const last_part_id = blk: {
         var last: usize = 0;
         for (table.partitions, 0..) |p, i| {
@@ -249,7 +249,7 @@ fn render(table: *PartTable, stream: *dim.BinaryStream) dim.Content.RenderError!
 }
 
 pub const Partition = struct {
-    offset: ?u64 = null,
+    offset: ?u64,
     size: ?u64,
 
     bootable: bool,
