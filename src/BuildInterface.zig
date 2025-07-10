@@ -173,7 +173,7 @@ const ContentWriter = struct {
                     try cw.code.writeByte('\n');
 
                     if (part.name) |name| {
-                        try cw.code.print("    name {s}\n", .{name});
+                        try cw.code.print("    name \"{}\"\n", .{std.zig.fmtEscapes(name)});
                     }
                     if (part.offset) |offset| {
                         try cw.code.print("    offset {d}\n", .{offset});
