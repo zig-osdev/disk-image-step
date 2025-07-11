@@ -132,7 +132,10 @@ const ContentWriter = struct {
                 for (data.partitions) |mpart| {
                     if (mpart) |part| {
                         try cw.code.writeAll("  part\n");
-                        try cw.code.print("    type {s}\n", .{@tagName(part.type)});
+                        switch (part.type) {
+                            .named => |id| try cw.code.print("    type {s}\n", .{@tagName(id)}),
+                            .custom => |id| try cw.code.print("    type 0x{X:0>2}\n", .{id}),
+                        }
                         if (part.bootable) {
                             try cw.code.writeAll("    bootable\n");
                         }
@@ -337,17 +340,29 @@ pub const MbrPartTable = struct {
     bootloader: ?*const Content = null,
     partitions: [4]?*const Partition,
 
+    pub const PartType = enum(u8) {
+        empty,
+        fat12,
+        ntfs,
+        @"fat32-chs",
+        @"fat32-lba",
+        @"fat16-lba",
+        @"linux-swa",
+        @"linux-fs",
+        @"linux-lvm",
+    };
+
     pub const Partition = struct {
-        type: enum {
-            empty,
-            fat12,
-            ntfs,
-            @"fat32-chs",
-            @"fat32-lba",
-            @"fat16-lba",
-            @"linux-swa",
-            @"linux-fs",
-            @"linux-lvm",
+        type: union(enum) {
+            named: PartType,
+            custom: u8,
+
+            pub fn predefined(value: PartType) @This() {
+                return .{ .named = value };
+            }
+            pub fn id(value: u8) @This() {
+                return .{ .custom = value };
+            }
         },
         bootable: bool = false,
         size: ?u64 = null,
