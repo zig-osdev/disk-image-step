@@ -132,19 +132,19 @@ const ContentWriter = struct {
                 for (data.partitions) |mpart| {
                     if (mpart) |part| {
                         try cw.code.writeAll("  part\n");
+                        try cw.code.print("    type {s}\n", .{@tagName(part.type)});
                         if (part.bootable) {
-                            try cw.code.print("    type {s}\n", .{@tagName(part.type)});
                             try cw.code.writeAll("    bootable\n");
-                            if (part.offset) |offset| {
-                                try cw.code.print("    offset {d}\n", .{offset});
-                            }
-                            if (part.size) |size| {
-                                try cw.code.print("    size {d}\n", .{size});
-                            }
-                            try cw.code.writeAll("    contains");
-                            try cw.render(part.data);
-                            try cw.code.writeAll("\n");
                         }
+                        if (part.offset) |offset| {
+                            try cw.code.print("    offset {d}\n", .{offset});
+                        }
+                        if (part.size) |size| {
+                            try cw.code.print("    size {d}\n", .{size});
+                        }
+                        try cw.code.writeAll("    contains");
+                        try cw.render(part.data);
+                        try cw.code.writeAll("\n");
                         try cw.code.writeAll("  endpart\n");
                     } else {
                         try cw.code.writeAll("  ignore\n");
