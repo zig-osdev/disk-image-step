@@ -20,8 +20,10 @@ pub fn parse(ctx: dim.Context) !dim.Content {
 }
 
 fn render(self: *FillData, stream: *dim.BinaryStream) dim.Content.RenderError!void {
-    try stream.writer().writeByteNTimes(
+    var writer = stream.writer();
+    writer.interface.splatByteAll(
         self.fill_value,
         stream.length,
-    );
+    ) catch return error.Overflow; // TODO FIX we don't know actually why this failed.
+                                   // std.Io.Writer only returns error.WriteFailed.
 }

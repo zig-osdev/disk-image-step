@@ -103,10 +103,12 @@ pub fn get_include_path(parser: Parser, allocator: std.mem.Allocator, rel_includ
     if (parser.file_stack.len == parser.max_include_depth)
         return error.MaxIncludeDepthReached;
 
-    const top_path = if (parser.file_stack.len > 0)
-        parser.file_stack[parser.file_stack.len - 1].path
-    else
-        "";
+    // const top_path = if (parser.file_stack.len > 0)
+    //     parser.file_stack[parser.file_stack.len - 1].path
+    // else
+    //    "";
+
+    const top_path = ""; // TODO what the fuck, the actual issue here needs to be triaged. this workaround fixes things for me for now though.
 
     const abs_include_path = try std.fs.path.resolvePosix(
         allocator,
@@ -208,10 +210,12 @@ fn resolve_value(parser: *Parser, token_type: TokenType, text: []const u8) ![]co
             if (!has_includes)
                 return content_slice;
 
-            var unescaped: std.ArrayList(u8) = .init(parser.arena.allocator());
-            defer unescaped.deinit();
+            const allocator = parser.arena.allocator();
 
-            try unescaped.ensureTotalCapacityPrecise(content_slice.len);
+            var unescaped = std.ArrayList(u8).empty;
+            defer unescaped.deinit(allocator);
+
+            try unescaped.ensureTotalCapacityPrecise(allocator, content_slice.len);
 
             {
                 var i: usize = 0;
@@ -220,7 +224,7 @@ fn resolve_value(parser: *Parser, token_type: TokenType, text: []const u8) ![]co
                     i += 1;
 
                     if (c != '\\') {
-                        try unescaped.append(c);
+                        try unescaped.append(allocator, c);
                         continue;
                     }
 
@@ -233,20 +237,20 @@ fn resolve_value(parser: *Parser, token_type: TokenType, text: []const u8) ![]co
                     errdefer std.log.err("invalid escape sequence: \\{s}", .{[_]u8{esc_code}});
 
                     switch (esc_code) {
-                        'r' => try unescaped.append('\r'),
-                        'n' => try unescaped.append('\n'),
-                        't' => try unescaped.append('\t'),
-                        '\\' => try unescaped.append('\\'),
-                        '\"' => try unescaped.append('\"'),
-                        '\'' => try unescaped.append('\''),
-                        'e' => try unescaped.append('\x1B'),
+                        'r' => try unescaped.append(allocator, '\r'),
+                        'n' => try unescaped.append(allocator, '\n'),
+                        't' => try unescaped.append(allocator, '\t'),
+                        '\\' => try unescaped.append(allocator, '\\'),
+                        '\"' => try unescaped.append(allocator, '\"'),
+                        '\'' => try unescaped.append(allocator, '\''),
+                        'e' => try unescaped.append(allocator, '\x1B'),
 
                         else => return error.InvalidEscapeSequence,
                     }
                 }
             }
 
-            return try unescaped.toOwnedSlice();
+            return try unescaped.toOwnedSlice(allocator);
         },
 
         .comment, .directive, .whitespace => unreachable,

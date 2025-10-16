@@ -14,7 +14,7 @@ format_as: FatType,
 label: ?[]const u8 = null,
 fats: ?fatfs.FatTables = null,
 rootdir_size: ?c_uint = null,
-ops: std.ArrayList(common.FsOperation),
+ops: std.array_list.Managed(common.FsOperation),
 sector_align: ?c_uint = null,
 cluster_size: ?u32 = null,
 
@@ -88,7 +88,7 @@ fn render(self: *FAT, stream: *dim.BinaryStream) dim.Content.RenderError!void {
 
     if (stream.length < min_size) {
         // TODO(fqu): Report fatal erro!
-        std.log.err("cannot format {} bytes with {s}: min required size is {}", .{
+        std.log.err("cannot format {f} bytes with {s}: min required size is {f}", .{
             @as(dim.DiskSize, @enumFromInt(stream.length)),
             @tagName(self.format_as),
             @as(dim.DiskSize, @enumFromInt(min_size)),
@@ -98,7 +98,7 @@ fn render(self: *FAT, stream: *dim.BinaryStream) dim.Content.RenderError!void {
 
     if (stream.length > max_size) {
         // TODO(fqu): Report warning
-        std.log.warn("will not use all available space: available space is {}, but maximum size for {s} is {}", .{
+        std.log.warn("will not use all available space: available space is {f}, but maximum size for {s} is {f}", .{
             @as(dim.DiskSize, @enumFromInt(stream.length)),
             @tagName(self.format_as),
             @as(dim.DiskSize, @enumFromInt(min_size)),
@@ -147,8 +147,8 @@ fn render(self: *FAT, stream: *dim.BinaryStream) dim.Content.RenderError!void {
                 return error.IoError;
             }
         } else {
-            std.log.err("label \"{}\" is {} characters long, but only up to {} are permitted.", .{
-                std.zig.fmtEscapes(label),
+            std.log.err("label \"{f}\" is {} characters long, but only up to {} are permitted.", .{
+                std.zig.fmtString(label),
                 label.len,
                 max_label_len,
             });
@@ -212,7 +212,7 @@ const AtomicOps = struct {
         };
     }
 
-    pub fn mkfile(ops: AtomicOps, path: []const u8, reader: anytype) dim.Content.RenderError!void {
+    pub fn mkfile(ops: AtomicOps, path: []const u8, reader: *std.Io.Reader) dim.Content.RenderError!void {
         _ = ops;
 
         var path_buffer: [max_path_len:0]u8 = undefined;
@@ -244,19 +244,28 @@ const AtomicOps = struct {
         };
         defer fs_file.close();
 
-        var fifo: std.fifo.LinearFifo(u8, .{ .Static = 8192 }) = .init();
-        fifo.pump(
-            reader,
-            fs_file.writer(),
-        ) catch |err| switch (@as(dim.FileHandle.ReadError || fatfs.File.ReadError.Error, err)) {
-            error.Overflow => return error.IoError,
-            error.ReadFileFailed => return error.IoError,
-            error.Timeout => @panic("implementation bug in fatfs glue"),
-            error.DiskErr => return error.IoError,
-            error.IntErr => return error.IoError,
-            error.Denied => @panic("implementation bug in fatfs glue"),
-            error.InvalidObject => @panic("implementation bug in fatfs glue"),
-        };
+        var writer_buf: [8192]u8 = undefined;
+        var writer = fs_file.writer(&writer_buf);
+
+        _ = reader.streamRemaining(&writer.interface) catch return error.IoError;
+
+        writer.interface.flush() catch return error.IoError;
+
+        // TODO we've lost a lot of error specificity due to the use of the new APIs
+        // See old code:
+
+        // fifo.pump(
+        //     reader,
+        //     fs_file.writer(),
+        // ) catch |err| switch (@as(dim.FileHandle.ReadError || fatfs.File.ReadError.Error, err)) {
+        //     error.Overflow => return error.IoError,
+        //     error.ReadFileFailed => return error.IoError,
+        //     error.Timeout => @panic("implementation bug in fatfs glue"),
+        //     error.DiskErr => return error.IoError,
+        //     error.IntErr => return error.IoError,
+        //     error.Denied => @panic("implementation bug in fatfs glue"),
+        //     error.InvalidObject => @panic("implementation bug in fatfs glue"),
+        // };
     }
 };
 
