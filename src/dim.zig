@@ -117,7 +117,7 @@ pub fn main() !u8 {
     var current_dir = try std.fs.cwd().openDir(".", .{});
     defer current_dir.close();
 
-    const script_source = try current_dir.readFileAlloc(gpa, script_path, max_script_size);
+    const script_source = try current_dir.readFileAlloc(script_path, gpa, .limited(max_script_size));
     defer gpa.free(script_source);
 
     if (options.@"deps-file") |deps_file_path| {
@@ -415,7 +415,7 @@ const Environment = struct {
     fn fetch_file(io: *const Parser.IO, allocator: std.mem.Allocator, path: []const u8) error{ FileNotFound, IoError, OutOfMemory, InvalidPath }![]const u8 {
         const env: *const Environment = @fieldParentPtr("io", io);
 
-        const contents = env.include_base.readFileAlloc(allocator, path, max_script_size) catch |err| switch (err) {
+        const contents = env.include_base.readFileAlloc(path, allocator, .limited(max_script_size)) catch |err| switch (err) {
             error.OutOfMemory => return error.OutOfMemory,
             error.FileNotFound => {
                 const ctx = Context{ .env = @constCast(env) };
@@ -664,6 +664,7 @@ pub const FileHandle = struct {
 
 pub const BinaryStream = struct {
     pub const WriteError = error{ Overflow, IoError };
+    pub const WriterError = std.Io.Writer.Error;
     pub const ReadError = error{ Overflow, IoError };
     pub const Writer = std.io.GenericWriter(*BinaryStream, WriteError, write_some);
 
@@ -754,15 +755,48 @@ pub const BinaryStream = struct {
     }
 
     pub fn writer(bs: *BinaryStream) Writer {
-        return .{ .context = bs };
+        return .{
+            .interface = .{
+                .vtable = &.{
+                    .drain = Writer.drain,
+                },
+                .buffer = &.{},
+            },
+            .stream = bs,
+        };
     }
 
-    fn write_some(stream: *BinaryStream, data: []const u8) WriteError!usize {
+    pub const Writer = struct {
+        interface: std.Io.Writer,
+        stream: *BinaryStream,
+
+        pub fn drain(io_w: *std.Io.Writer, data: []const []const u8, splat: usize) std.Io.Writer.Error!usize {
+            const w: *Writer = @alignCast(@fieldParentPtr("interface", io_w));
+
+            var written: usize = 0;
+
+            for (data[0..data.len - 1]) |bytes| {
+                written += try w.stream.write_some(bytes);
+            }
+
+            const pattern = data[data.len - 1];
+            switch (pattern.len) {
+                0 => {},
+                else => for (0..splat) |_| {
+                    written += try w.stream.write_some(pattern);
+                },
+            }
+
+            return written;
+        }
+    };
+
+    fn write_some(stream: *BinaryStream, data: []const u8) std.Io.Writer.Error!usize {
         const remaining_len = stream.length - stream.virtual_offset;
 
         const written_len: usize = @intCast(@min(remaining_len, data.len));
 
-        try stream.write(stream.virtual_offset, data[0..written_len]);
+        stream.write(stream.virtual_offset, data[0..written_len]) catch return error.WriteFailed;
         stream.virtual_offset += written_len;
 
         return written_len;

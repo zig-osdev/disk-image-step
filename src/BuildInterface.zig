@@ -439,7 +439,7 @@ pub const FatFs = struct {
 
 pub const FileSystemBuilder = struct {
     b: *std.Build,
-    list: std.ArrayListUnmanaged(FileSystem.Item),
+    list: std.ArrayList(FileSystem.Item),
 
     pub fn init(b: *std.Build) FileSystemBuilder {
         return FileSystemBuilder{
