@@ -17,7 +17,9 @@ pub fn parse(ctx: dim.Context) !dim.Content {
         .partitions = undefined,
     };
 
-    var partitions = std.ArrayList(Partition).init(ctx.get_arena());
+    const allocator = ctx.get_arena();
+
+    var partitions: std.ArrayList(Partition) = .empty;
     loop: while (true) {
         const kw = try ctx.parse_enum(enum {
             guid,
@@ -34,7 +36,7 @@ pub fn parse(ctx: dim.Context) !dim.Content {
                 pt.disk_id = Guid.parse(guid_str[0..36].*) catch |err|
                     return ctx.report_fatal_error("Invalid disk GUID: {}", .{err});
             },
-            .part => (try partitions.addOne()).* = try parsePartition(ctx),
+            .part => (try partitions.addOne(allocator)).* = try parsePartition(ctx),
             .@"legacy-bootable" => pt.legacy_bootable = true,
             .endgpt => break :loop,
         }
@@ -113,7 +115,7 @@ fn parsePartition(ctx: dim.Context) !Partition {
 
                 const type_guid = known_types.get(type_name) orelse blk: {
                     if (type_name.len == 36) if (Guid.parse(type_name[0..36].*)) |guid| break :blk guid else |_| {};
-                    return ctx.report_fatal_error("unknown partition type: `{}`", .{std.zig.fmtEscapes(type_name)});
+                    return ctx.report_fatal_error("unknown partition type: `{f}`", .{std.zig.fmtString(type_name)});
                 };
 
                 try updater.set(.type, type_guid);
@@ -167,7 +169,7 @@ pub fn render(table: *PartTable, stream: *dim.BinaryStream) dim.Content.RenderEr
     for (table.partitions[0..], 0..) |partition, i| {
         @memset(&pe_block, 0);
 
-        const offset = partition.offset orelse 33 * block_size;
+        const offset = partition.offset orelse 34 * block_size;
         const size = partition.size orelse if (i == table.partitions.len - 1)
             ((max_partition_lba + 1) * block_size) - offset
         else

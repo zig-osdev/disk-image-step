@@ -56,7 +56,9 @@ fn Executor(comptime T: type) type {
                     };
                     defer handle.close();
 
-                    try exec.add_file(data.path, handle.reader());
+                    var reader_buf: [1024]u8 = undefined;
+                    var reader = handle.reader(&reader_buf);
+                    try exec.add_file(data.path, &reader.interface);
                 },
                 .copy_dir => |data| {
                     var iter_dir = data.source.open_dir() catch |err| switch (err) {
@@ -91,7 +93,10 @@ fn Executor(comptime T: type) type {
                                 var file = try fname.open();
                                 defer file.close();
 
-                                try exec.add_file(path, file.reader());
+                                var reader_buf: [1024]u8 = undefined;
+                                var reader = file.reader(&reader_buf);
+
+                                try exec.add_file(path, &reader.interface);
                             },
 
                             .directory => {
@@ -117,14 +122,13 @@ fn Executor(comptime T: type) type {
 
                     try data.contents.render(&bs);
 
-                    var fbs: std.io.FixedBufferStream([]u8) = .{ .buffer = buffer, .pos = 0 };
-
-                    try exec.add_file(data.path, fbs.reader());
+                    var reader = std.Io.Reader.fixed(buffer);
+                    try exec.add_file(data.path, &reader);
                 },
             }
         }
 
-        fn add_file(exec: Exec, path: [:0]const u8, reader: anytype) !void {
+        fn add_file(exec: Exec, path: [:0]const u8, reader: *std.Io.Reader) !void {
             if (std.fs.path.dirnamePosix(path)) |dir| {
                 try exec.recursive_mkdir(dir);
             }
@@ -143,7 +147,7 @@ fn Executor(comptime T: type) type {
             try exec.inner_mkdir(path);
         }
 
-        fn inner_mkfile(exec: Exec, path: []const u8, reader: anytype) dim.Content.RenderError!void {
+        fn inner_mkfile(exec: Exec, path: []const u8, reader: *std.Io.Reader) dim.Content.RenderError!void {
             try exec.inner.mkfile(path, reader);
         }
 
@@ -153,24 +157,26 @@ fn Executor(comptime T: type) type {
 
         fn walk_err(err: (std.fs.Dir.OpenError || std.mem.Allocator.Error)) dim.Content.RenderError {
             return switch (err) {
-                error.InvalidUtf8 => error.InvalidPath,
-                error.InvalidWtf8 => error.InvalidPath,
-                error.BadPathName => error.InvalidPath,
+                error.InvalidUtf8,
+                error.InvalidWtf8,
+                error.BadPathName,
                 error.NameTooLong => error.InvalidPath,
 
                 error.OutOfMemory => error.OutOfMemory,
                 error.FileNotFound => error.FileNotFound,
 
-                error.DeviceBusy => error.IoError,
-                error.AccessDenied => error.IoError,
-                error.SystemResources => error.IoError,
-                error.NoDevice => error.IoError,
-                error.Unexpected => error.IoError,
-                error.NetworkNotFound => error.IoError,
-                error.SymLinkLoop => error.IoError,
-                error.ProcessFdQuotaExceeded => error.IoError,
-                error.SystemFdQuotaExceeded => error.IoError,
-                error.NotDir => error.IoError,
+                error.DeviceBusy,
+                error.AccessDenied,
+                error.SystemResources,
+                error.NoDevice,
+                error.Unexpected,
+                error.NetworkNotFound,
+                error.SymLinkLoop,
+                error.ProcessFdQuotaExceeded,
+                error.SystemFdQuotaExceeded,
+                error.NotDir,
+                error.ProcessNotFound, 
+                error.PermissionDenied, => error.IoError,
             };
         }
     };
@@ -185,23 +191,23 @@ fn parse_path(ctx: dim.Context) ![:0]const u8 {
     }
 
     if (!std.mem.startsWith(u8, path, "/")) {
-        try ctx.report_nonfatal_error("Path '{}' did not start with a \"/\"", .{
-            std.zig.fmtEscapes(path),
+        try ctx.report_nonfatal_error("Path '{f}' did not start with a \"/\"", .{
+            std.zig.fmtString(path),
         });
     }
 
     for (path) |c| {
         if (c < 0x20 or c == 0x7F or c == '\\') {
-            try ctx.report_nonfatal_error("Path '{}' contains invalid character 0x{X:0>2}", .{
-                std.zig.fmtEscapes(path),
+            try ctx.report_nonfatal_error("Path '{f}' contains invalid character 0x{X:0>2}", .{
+                std.zig.fmtString(path),
                 c,
             });
         }
     }
 
     _ = std.unicode.Utf8View.init(path) catch |err| {
-        try ctx.report_nonfatal_error("Path '{}' is not a valid UTF-8 string: {s}", .{
-            std.zig.fmtEscapes(path),
+        try ctx.report_nonfatal_error("Path '{f}' is not a valid UTF-8 string: {s}", .{
+            std.zig.fmtString(path),
             @errorName(err),
         });
     };
@@ -249,8 +255,8 @@ pub fn parse_ops(ctx: dim.Context, end_seq: []const u8, handler: anytype) !void 
 }
 
 fn normalize(allocator: std.mem.Allocator, src_path: []const u8) ![:0]const u8 {
-    var list = std.ArrayList([]const u8).init(allocator);
-    defer list.deinit();
+    var list: std.ArrayList([]const u8) = .empty;
+    defer list.deinit(allocator);
 
     var parts = std.mem.tokenizeAny(u8, src_path, "\\/");
 
@@ -263,7 +269,7 @@ fn normalize(allocator: std.mem.Allocator, src_path: []const u8) ![:0]const u8 {
             _ = list.pop();
         } else {
             // this is an actual "descend"
-            try list.append(part);
+            try list.append(allocator, part);
         }
     }
 
