@@ -672,7 +672,7 @@ pub const BinaryStream = struct {
 
     virtual_offset: u64 = 0,
 
-    /// Max number of bytes that an be written
+    /// Max number of bytes that can be written
     length: u64,
 
     /// Constructs a BinaryStream from a slice.
