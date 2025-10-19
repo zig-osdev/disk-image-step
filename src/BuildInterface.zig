@@ -32,6 +32,8 @@ pub fn createDisk(dimmer: Interface, size: u64, content: Content) std.Build.Lazy
 
     const compile_script = b.addRunArtifact(dimmer.dimmer_exe);
 
+    compile_script.setCwd(script_file.dirname());
+
     _ = compile_script.addPrefixedDepFileOutputArg("--deps-file=", "image.d");
 
     compile_script.addArg(b.fmt("--size={d}", .{size}));

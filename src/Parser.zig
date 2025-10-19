@@ -103,12 +103,10 @@ pub fn get_include_path(parser: Parser, allocator: std.mem.Allocator, rel_includ
     if (parser.file_stack.len == parser.max_include_depth)
         return error.MaxIncludeDepthReached;
 
-    // const top_path = if (parser.file_stack.len > 0)
-    //     parser.file_stack[parser.file_stack.len - 1].path
-    // else
-    //    "";
-
-    const top_path = ""; // TODO what the fuck, the actual issue here needs to be triaged. this workaround fixes things for me for now though.
+    const top_path = if (parser.file_stack.len > 0)
+        parser.file_stack[parser.file_stack.len - 1].path
+    else
+       "";
 
     const abs_include_path = try std.fs.path.resolvePosix(
         allocator,

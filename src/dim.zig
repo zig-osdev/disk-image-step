@@ -116,11 +116,19 @@ pub fn main() !u8 {
         // TODO would it be better to store the writer and just reuse it? that way we can utilise
         // buffering and not have the risk of someone positional writes and breaking things.
 
+        // TODO Zig has a bug in dependency file handling: relative paths are taken not to the run
+        // step cwd, but to the project root. hence, we need to absolute paths until this is fixed.
+        var buf_output: [std.fs.max_path_bytes]u8 = undefined;
+        const output_path_abs = try std.fs.cwd().realpath(std.fs.path.dirname(output_path) orelse ".", &buf_output);
+        var buf_script: [std.fs.max_path_bytes]u8 = undefined;
+        const script_path_abs = try std.fs.cwd().realpath(script_path, &buf_script);
+
         try writer.interface.print(
-            \\{s}: {s}
+            \\{s}/{s}: {s}
         , .{
-            output_path,
-            script_path,
+            output_path_abs,
+            std.fs.path.basename(output_path),
+            script_path_abs,
         });
     }
     defer if (global_deps_file) |deps_file|
