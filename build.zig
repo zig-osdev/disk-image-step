@@ -53,6 +53,7 @@ pub fn build(b: *std.Build) void {
         const script_test = b.step(step_name, b.fmt("Run {s} behaviour test", .{script}));
 
         const run_behaviour = b.addRunArtifact(dim_exe);
+        run_behaviour.setCwd(b.path(script).dirname());
         run_behaviour.addArg("--output");
         _ = run_behaviour.addOutputFileArg("disk.img");
         run_behaviour.addArg("--script");

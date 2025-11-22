@@ -62,14 +62,18 @@ pub fn createDisk(dimmer: Interface, size: u64, content: Content) std.Build.Lazy
     return result_file;
 }
 
-fn renderContent(wfs: *std.Build.Step.WriteFile, allocator: std.mem.Allocator, content: Content) struct { []const u8, ContentWriter.VariableMap } {
-    var code: std.ArrayList(u8) = .init(allocator);
+fn renderContent(
+    wfs: *std.Build.Step.WriteFile,
+    allocator: std.mem.Allocator,
+    content: Content,
+) struct { []const u8, ContentWriter.VariableMap } {
+    var code: std.Io.Writer.Allocating = .init(allocator);
     defer code.deinit();
 
     var variables: ContentWriter.VariableMap = .init(allocator);
 
     var cw: ContentWriter = .{
-        .code = code.writer(),
+        .code = &code.writer,
         .wfs = wfs,
         .vars = &variables,
     };
@@ -99,7 +103,7 @@ const ContentWriter = struct {
     pub const VariableMap = std.StringArrayHashMap(struct { std.Build.LazyPath, ContentWriter.UsageHint });
 
     wfs: *std.Build.Step.WriteFile,
-    code: std.ArrayList(u8).Writer,
+    code: *std.Io.Writer,
     vars: *VariableMap,
 
     fn render(cw: ContentWriter, content: Content) !void {
@@ -117,7 +121,7 @@ const ContentWriter = struct {
             },
 
             .paste_file => |data| {
-                try cw.code.print("paste-file {}", .{cw.fmtLazyPath(data, .file)});
+                try cw.code.print("paste-file {f}", .{cw.fmtLazyPath(data, .file)});
             },
 
             .mbr_part_table => |data| {
@@ -158,7 +162,7 @@ const ContentWriter = struct {
             .gpt_part_table => |data| {
                 try cw.code.writeAll("gpt-part\n");
 
-                if(data.legacy_bootable) {
+                if (data.legacy_bootable) {
                     try cw.code.writeAll("  legacy-bootable\n");
                 }
 
@@ -176,7 +180,7 @@ const ContentWriter = struct {
                     try cw.code.writeByte('\n');
 
                     if (part.name) |name| {
-                        try cw.code.print("    name \"{}\"\n", .{std.zig.fmtEscapes(name)});
+                        try cw.code.print("    name \"{f}\"\n", .{std.zig.fmtString(name)});
                     }
                     if (part.offset) |offset| {
                         try cw.code.print("    offset {d}\n", .{offset});
@@ -198,7 +202,7 @@ const ContentWriter = struct {
                     @tagName(data.format),
                 });
                 if (data.label) |label| {
-                    try cw.code.print("  label {}\n", .{
+                    try cw.code.print("  label {f}\n", .{
                         fmtPath(label),
                     });
                 }
@@ -213,48 +217,90 @@ const ContentWriter = struct {
     fn renderFileSystemTree(cw: ContentWriter, fs: FileSystem) !void {
         for (fs.items) |item| {
             switch (item) {
-                .empty_dir => |dir| try cw.code.print("mkdir {}\n", .{
+                .empty_dir => |dir| try cw.code.print("mkdir {f}\n", .{
                     fmtPath(dir),
                 }),
 
-                .copy_dir => |copy| try cw.code.print("copy-dir {} {}\n", .{
+                .copy_dir => |copy| try cw.code.print("copy-dir {f} {f}\n", .{
                     fmtPath(copy.destination),
                     cw.fmtLazyPath(copy.source, .directory),
                 }),
 
-                .copy_file => |copy| try cw.code.print("copy-file {} {}\n", .{
+                .copy_file => |copy| try cw.code.print("copy-file {f} {f}\n", .{
                     fmtPath(copy.destination),
                     cw.fmtLazyPath(copy.source, .file),
                 }),
 
-                .include_script => |script| try cw.code.print("!include {}\n", .{
+                .include_script => |script| try cw.code.print("!include {f}\n", .{
                     cw.fmtLazyPath(script, .file),
                 }),
             }
         }
     }
 
-    const PathFormatter = std.fmt.Formatter(formatPath);
-    const LazyPathFormatter = std.fmt.Formatter(formatLazyPath);
+    const PathFormatter = struct {
+        path: []const u8,
+
+        pub fn format(
+            p: PathFormatter,
+            writer: *std.Io.Writer,
+        ) std.Io.Writer.Error!void {
+            const path = p.path;
+            const is_safe_word = for (path) |char| {
+                switch (char) {
+                    'A'...'Z',
+                    'a'...'z',
+                    '0'...'9',
+                    '_',
+                    '-',
+                    '/',
+                    '.',
+                    ':',
+                    => {},
+                    else => break false,
+                }
+            } else true;
+
+            if (is_safe_word) {
+                try writer.writeAll(path);
+            } else {
+                try writer.writeAll("\"");
+
+                for (path) |c| {
+                    if (c == '\\') {
+                        try writer.writeAll("/");
+                    } else {
+                        try writer.print("{f}", .{std.zig.fmtString(&[_]u8{c})});
+                    }
+                }
+
+                try writer.writeAll("\"");
+            }
+        }
+    };
+    const LazyPathFormatter = std.fmt.Alt(
+        struct { ContentWriter, std.Build.LazyPath, UsageHint },
+        formatLazyPath,
+    );
     const UsageHint = enum { file, directory };
 
-    fn fmtLazyPath(cw: ContentWriter, path: std.Build.LazyPath, hint: UsageHint) LazyPathFormatter {
+    fn fmtLazyPath(
+        cw: ContentWriter,
+        path: std.Build.LazyPath,
+        hint: UsageHint,
+    ) LazyPathFormatter {
         return .{ .data = .{ cw, path, hint } };
     }
 
     fn fmtPath(path: []const u8) PathFormatter {
-        return .{ .data = path };
+        return .{ .path = path };
     }
 
     fn formatLazyPath(
         data: struct { ContentWriter, std.Build.LazyPath, UsageHint },
-        comptime fmt: []const u8,
-        options: std.fmt.FormatOptions,
-        writer: anytype,
-    ) !void {
+        writer: *std.Io.Writer,
+    ) std.Io.Writer.Error!void {
         const cw, const path, const hint = data;
-        _ = fmt;
-        _ = options;
 
         switch (path) {
             .cwd_relative,
@@ -267,7 +313,7 @@ const ContentWriter = struct {
 
                 std.debug.assert(std.fs.path.isAbsolute(full_path));
 
-                try writer.print("{}", .{
+                try writer.print("{f}", .{
                     fmtPath(full_path),
                 });
             },
@@ -278,51 +324,10 @@ const ContentWriter = struct {
                 const var_id = cw.vars.count() + 1;
                 const var_name = cw.wfs.step.owner.fmt("PATH{}", .{var_id});
 
-                try cw.vars.put(var_name, .{ path, hint });
+                cw.vars.put(var_name, .{ path, hint }) catch return error.WriteFailed;
 
                 try writer.print("${s}", .{var_name});
             },
-        }
-    }
-
-    fn formatPath(
-        path: []const u8,
-        comptime fmt: []const u8,
-        options: std.fmt.FormatOptions,
-        writer: anytype,
-    ) !void {
-        _ = fmt;
-        _ = options;
-
-        const is_safe_word = for (path) |char| {
-            switch (char) {
-                'A'...'Z',
-                'a'...'z',
-                '0'...'9',
-                '_',
-                '-',
-                '/',
-                '.',
-                ':',
-                => {},
-                else => break false,
-            }
-        } else true;
-
-        if (is_safe_word) {
-            try writer.writeAll(path);
-        } else {
-            try writer.writeAll("\"");
-
-            for (path) |c| {
-                if (c == '\\') {
-                    try writer.writeAll("/");
-                } else {
-                    try writer.print("{}", .{std.zig.fmtEscapes(&[_]u8{c})});
-                }
-            }
-
-            try writer.writeAll("\"");
         }
     }
 };
@@ -385,7 +390,7 @@ pub const GptPartTable = struct {
                 @"microsoft-basic-data",
                 @"microsoft-reserved",
                 @"windows-recovery",
-                @"plan9",
+                plan9,
                 @"linux-swap",
                 @"linux-fs",
                 @"linux-reserved",

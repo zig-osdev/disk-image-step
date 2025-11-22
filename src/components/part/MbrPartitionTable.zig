@@ -115,7 +115,10 @@ fn parse_partition(ctx: dim.Context) !Partition {
                     value
                 else |_|
                     known_partition_types.get(part_name) orelse blk: {
-                        try ctx.report_nonfatal_error("unknown partition type '{}'", .{std.zig.fmtEscapes(part_name)});
+                        try ctx.report_nonfatal_error(
+                            "unknown partition type '{f}'",
+                            .{std.zig.fmtString(part_name)},
+                        );
                         break :blk 0x00;
                     };
 

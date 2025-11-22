@@ -208,7 +208,7 @@ fn resolve_value(parser: *Parser, token_type: TokenType, text: []const u8) ![]co
             if (!has_includes)
                 return content_slice;
 
-            var unescaped: std.ArrayList(u8) = .init(parser.arena.allocator());
+            var unescaped: std.array_list.Managed(u8) = .init(parser.arena.allocator());
             defer unescaped.deinit();
 
             try unescaped.ensureTotalCapacityPrecise(content_slice.len);

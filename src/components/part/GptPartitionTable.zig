@@ -12,12 +12,12 @@ partitions: []Partition,
 
 pub fn parse(ctx: dim.Context) !dim.Content {
     const pt = try ctx.alloc_object(PartTable);
-    pt.* = PartTable{
+    pt.* = .{
         .disk_id = null,
         .partitions = undefined,
     };
 
-    var partitions = std.ArrayList(Partition).init(ctx.get_arena());
+    var partitions: std.ArrayList(Partition) = .empty;
     loop: while (true) {
         const kw = try ctx.parse_enum(enum {
             guid,
@@ -34,7 +34,7 @@ pub fn parse(ctx: dim.Context) !dim.Content {
                 pt.disk_id = Guid.parse(guid_str[0..36].*) catch |err|
                     return ctx.report_fatal_error("Invalid disk GUID: {}", .{err});
             },
-            .part => (try partitions.addOne()).* = try parsePartition(ctx),
+            .part => (try partitions.addOne(ctx.get_arena())).* = try parsePartition(ctx),
             .@"legacy-bootable" => pt.legacy_bootable = true,
             .endgpt => break :loop,
         }
@@ -75,7 +75,7 @@ pub fn parse(ctx: dim.Context) !dim.Content {
 }
 
 fn parsePartition(ctx: dim.Context) !Partition {
-    var part = Partition{
+    var part: Partition = .{
         .type = undefined,
         .part_id = null,
         .size = null,
@@ -113,7 +113,10 @@ fn parsePartition(ctx: dim.Context) !Partition {
 
                 const type_guid = known_types.get(type_name) orelse blk: {
                     if (type_name.len == 36) if (Guid.parse(type_name[0..36].*)) |guid| break :blk guid else |_| {};
-                    return ctx.report_fatal_error("unknown partition type: `{}`", .{std.zig.fmtEscapes(type_name)});
+                    return ctx.report_fatal_error(
+                        "unknown partition type: `{f}`",
+                        .{std.zig.fmtString(type_name)},
+                    );
                 };
 
                 try updater.set(.type, type_guid);
