@@ -18,6 +18,8 @@ pub fn build(b: *std.Build) void {
         .mkfs = true,
         .exfat = true,
         .label = true,
+        .target = target,
+        .optimize = optimize,
     });
 
     const zfat_mod = zfat_dep.module("zfat");
