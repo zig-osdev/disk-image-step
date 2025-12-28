@@ -15,6 +15,6 @@ pub fn parse(ctx: dim.Context) !dim.Content {
     }));
 }
 
-fn render(self: *PasteFile, stream: *dim.BinaryStream) dim.Content.RenderError!void {
-    try self.file_handle.copy_to(stream);
+fn render(self: *PasteFile, io: std.Io, stream: *dim.BinaryStream) dim.Content.RenderError!void {
+    try self.file_handle.copy_to(io, stream);
 }

@@ -4,8 +4,9 @@
     .fingerprint = 0x9947018c924eecb2,
     .dependencies = .{
         .zfat = .{
-            .url = "git+https://github.com/ZigEmbeddedGroup/zfat.git#0571b0d8c8cc4fcb037a1d5e7ea5666cb2f83ddf",
-            .hash = "zfat-0.15.0-SNNK9RRqcgCLQ5mjXghbB6mokzcHORsGnY7GtbfOt2k3",
+            // .url = "git+https://github.com/CascadeOS/zfat#2806bfd983dd810c9c74b0ea6a63f783208518b5",
+            // .hash = "zfat-0.16.0-SNNK9fKtTgASssfmCblZwRMLU4pndVtwxTNhYCegBOyA",
+            .path = "../zfat"
         },
         .args = .{
             .url = "git+https://github.com/ikskuh/zig-args.git#8ae26b44a884ff20dca98ee84c098e8f8e94902f",

@@ -19,7 +19,8 @@ pub fn parse(ctx: dim.Context) !dim.Content {
     }));
 }
 
-fn render(self: *FillData, stream: *dim.BinaryStream) dim.Content.RenderError!void {
+fn render(self: *FillData, io: std.Io,  stream: *dim.BinaryStream) dim.Content.RenderError!void {
+    _ = io;
     var writer = stream.writer();
     writer.interface.splatByteAll(
         self.fill_value,

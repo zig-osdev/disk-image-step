@@ -72,6 +72,8 @@ pub fn main() !u8 {
 
     const gpa = gpa_impl.allocator();
 
+    var io: std.Io.Threaded = .init(gpa);
+
     const opts = try args.parseForCurrentProcess(Options, gpa, .print);
     defer opts.deinit();
 
@@ -187,7 +189,7 @@ pub fn main() !u8 {
 
         var stream: BinaryStream = .init_file(output_file, size_limit);
 
-        try root_content.render(&stream);
+        try root_content.render(io.io(), &stream);
     }
 
     if (global_deps_file != null) {
@@ -412,7 +414,7 @@ const Environment = struct {
         }
     }
 
-    fn fetch_file(io: *const Parser.IO, allocator: std.mem.Allocator, path: []const u8) error{ FileNotFound, IoError, OutOfMemory, InvalidPath }![]const u8 {
+    fn fetch_file(io: *const Parser.IO, allocator: std.mem.Allocator, path: []const u8) error{ FileNotFound, IoError, OutOfMemory, InvalidPath, Canceled }![]const u8 {
         const env: *const Environment = @fieldParentPtr("io", io);
 
         const contents = env.include_base.readFileAlloc(path, allocator, .limited(max_script_size)) catch |err| switch (err) {
@@ -455,8 +457,6 @@ pub const Content = struct {
         ConfigurationError,
         OutOfBounds,
         OutOfMemory,
-        ReadFailed,
-        WriteFailed,
     };
     pub const GuessError = FileName.GetSizeError;
 
@@ -470,23 +470,24 @@ pub const Content = struct {
     }
 
     /// Emits the content into a binary stream.
-    pub fn render(content: Content, stream: *BinaryStream) RenderError!void {
-        try content.vtable.render_fn(content.obj, stream);
+    pub fn render(content: Content, io: std.Io, stream: *BinaryStream) RenderError!void {
+        try content.vtable.render_fn(content.obj, io, stream);
     }
 
     pub const VTable = struct {
-        render_fn: *const fn (*anyopaque, *BinaryStream) RenderError!void,
+        render_fn: *const fn (*anyopaque, std.Io, *BinaryStream) RenderError!void,
 
         pub fn create(
             comptime Container: type,
             comptime funcs: struct {
-                render_fn: *const fn (*Container, *BinaryStream) RenderError!void,
+                render_fn: *const fn (*Container, std.Io, *BinaryStream) RenderError!void,
             },
         ) *const VTable {
             const Wrap = struct {
-                fn render(self: *anyopaque, stream: *BinaryStream) RenderError!void {
+                fn render(self: *anyopaque, io: std.Io, stream: *BinaryStream) RenderError!void {
                     return funcs.render_fn(
                         @ptrCast(@alignCast(self)),
+                        io,
                         stream,
                     );
                 }
@@ -503,7 +504,7 @@ pub const FileName = struct {
     root_dir: std.fs.Dir,
     rel_path: []const u8,
 
-    pub const OpenError = error{ FileNotFound, InvalidPath, IoError };
+    pub const OpenError = error{ FileNotFound, InvalidPath, IoError, Canceled };
 
     pub fn open(name: FileName) OpenError!FileHandle {
         const file = name.root_dir.openFile(name.rel_path, .{}) catch |err| switch (err) {
@@ -516,10 +517,10 @@ pub const FileName = struct {
                 return error.FileNotFound;
             },
 
+            error.Canceled => return error.Canceled,
+
             error.NameTooLong,
-            error.InvalidWtf8,
             error.BadPathName,
-            error.InvalidUtf8,
             => return error.InvalidPath,
 
             error.NoSpaceLeft,
@@ -563,10 +564,10 @@ pub const FileName = struct {
                 return error.FileNotFound;
             },
 
+            error.Canceled => return error.Canceled,
+
             error.NameTooLong,
-            error.InvalidWtf8,
             error.BadPathName,
-            error.InvalidUtf8,
             => return error.InvalidPath,
 
             error.DeviceBusy,
@@ -579,7 +580,6 @@ pub const FileName = struct {
             error.ProcessFdQuotaExceeded,
             error.SystemFdQuotaExceeded,
             error.NotDir,
-            error.ProcessNotFound,
             error.PermissionDenied,
             => return error.IoError,
         };
@@ -605,9 +605,7 @@ pub const FileName = struct {
             error.FileNotFound => return error.FileNotFound,
 
             error.NameTooLong,
-            error.InvalidWtf8,
             error.BadPathName,
-            error.InvalidUtf8,
             => return error.InvalidPath,
 
             error.NoSpaceLeft,
@@ -636,11 +634,11 @@ pub const FileName = struct {
         return stat.size;
     }
 
-    pub fn copy_to(file: FileName, stream: *BinaryStream) (OpenError || error{ ReadFailed, WriteFailed })!void {
+    pub fn copy_to(file: FileName, io: std.Io, stream: *BinaryStream) (OpenError || error{ ReadFailed, WriteFailed })!void {
         var handle = try file.open();
-        defer handle.close();
+        defer handle.close(io);
 
-        var file_reader = handle.file.reader(&.{});
+        var file_reader = handle.file.reader(io, &.{});
 
         var buffer: [8192]u8 = undefined;
         var writer = stream.writer().adaptToNewApi(&buffer);
@@ -652,20 +650,21 @@ pub const FileName = struct {
 pub const FileHandle = struct {
     file: std.fs.File,
 
-    pub fn close(fd: *FileHandle) void {
+    pub fn close(fd: *FileHandle, io: std.Io) void {
+        _ = io;
         fd.file.close();
         fd.* = undefined;
     }
 
-    pub fn reader(fd: FileHandle, buffer: []u8) std.fs.File.Reader {
-        return fd.file.reader(buffer);
+    pub fn reader(fd: FileHandle, io: std.Io, buffer: []u8) std.fs.File.Reader {
+        return fd.file.reader(io, buffer);
     }
 };
 
 pub const BinaryStream = struct {
-    pub const WriteError = error{ Overflow, IoError };
+    pub const WriteError = error{ Overflow, IoError, Canceled };
     pub const WriterError = std.Io.Writer.Error;
-    pub const ReadError = error{ Overflow, IoError };
+    pub const ReadError = error{ Overflow, IoError, Canceled };
     pub const Writer = std.io.GenericWriter(*BinaryStream, WriteError, write_some);
 
     backing: Backing,
@@ -718,7 +717,7 @@ pub const BinaryStream = struct {
         };
     }
 
-    pub fn read(bs: *BinaryStream, offset: u64, data: []u8) ReadError!void {
+    pub fn read(bs: *BinaryStream, io: std.Io, offset: u64, data: []u8) ReadError!void {
         const end_pos = offset + data.len;
         if (end_pos > bs.length)
             return error.Overflow;
@@ -775,7 +774,7 @@ pub const BinaryStream = struct {
 
             var written: usize = 0;
 
-            for (data[0..data.len - 1]) |bytes| {
+            for (data[0 .. data.len - 1]) |bytes| {
                 written += try w.stream.write_some(bytes);
             }
 
@@ -882,7 +881,7 @@ pub const DiskSize = enum(u64) {
 
         const prefix, const suffix = .{
             divided[0 .. divided.len - 3],
-            std.mem.trimRight(u8, divided[divided.len - 3 ..], "0"),
+            std.mem.trimEnd(u8, divided[divided.len - 3 ..], "0"),
         };
 
         if (suffix.len > 0) {

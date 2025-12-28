@@ -137,7 +137,7 @@ fn parse_partition(ctx: dim.Context) !Partition {
     return part;
 }
 
-pub fn render(table: *PartTable, stream: *dim.BinaryStream) dim.Content.RenderError!void {
+pub fn render(table: *PartTable, io: std.Io, stream: *dim.BinaryStream) dim.Content.RenderError!void {
     const last_part_id = blk: {
         var last: usize = 0;
         for (table.partitions, 0..) |p, i| {
@@ -161,7 +161,7 @@ pub fn render(table: *PartTable, stream: *dim.BinaryStream) dim.Content.RenderEr
         if (table.bootloader) |bootloader| {
             var sector: dim.BinaryStream = .init_buffer(&boot_sector);
 
-            try bootloader.render(&sector);
+            try bootloader.render(io, &sector);
 
             const upper_limit: u64 = if (table.disk_id != null)
                 0x01B8
@@ -247,7 +247,7 @@ pub fn render(table: *PartTable, stream: *dim.BinaryStream) dim.Content.RenderEr
 
         var sub_view = try stream.slice(info.offset, info.size);
 
-        try part.contains.render(&sub_view);
+        try part.contains.render(io, &sub_view);
     }
 }
 

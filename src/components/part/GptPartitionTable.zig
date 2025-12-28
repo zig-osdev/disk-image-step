@@ -148,7 +148,7 @@ fn parsePartition(ctx: dim.Context) !Partition {
     return part;
 }
 
-pub fn render(table: *PartTable, stream: *dim.BinaryStream) dim.Content.RenderError!void {
+pub fn render(table: *PartTable, io: std.Io, stream: *dim.BinaryStream) dim.Content.RenderError!void {
     const random = std.crypto.random;
 
     const lba_len = stream.length / block_size;
@@ -211,7 +211,7 @@ pub fn render(table: *PartTable, stream: *dim.BinaryStream) dim.Content.RenderEr
         try stream.write(block_size * secondary_pe_array_lba + pe_ofs, &pe_block);
 
         var sub_view = try stream.slice(offset, size);
-        try partition.contains.render(&sub_view);
+        try partition.contains.render(io, &sub_view);
 
         pe_ofs += 0x80;
     }
@@ -273,7 +273,7 @@ pub fn render(table: *PartTable, stream: *dim.BinaryStream) dim.Content.RenderEr
     std.mem.writeInt(u32, backup_gpt_header[0x10..0x14], backup_gpt_header_crc32, .little); // CRC32 of backup header
 
     // write everything we generated to disk
-    try mbr.render(stream);
+    try mbr.render(io, stream);
     try stream.write(block_size, &gpt_header_block);
     try stream.write(block_size * secondary_pth_lba, &backup_gpt_header_block);
 }

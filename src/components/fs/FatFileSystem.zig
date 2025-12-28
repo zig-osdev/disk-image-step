@@ -81,7 +81,8 @@ const Appender = struct {
     }
 };
 
-fn render(self: *FAT, stream: *dim.BinaryStream) dim.Content.RenderError!void {
+fn render(self: *FAT, io: std.Io, stream: *dim.BinaryStream) dim.Content.RenderError!void {
+    fatfs.io = io;
     var bsd: BinaryStreamDisk = .{ .stream = stream };
 
     const min_size, const max_size = self.format_as.get_size_limits();
@@ -154,7 +155,7 @@ fn render(self: *FAT, stream: *dim.BinaryStream) dim.Content.RenderError!void {
 
     const wrapper = AtomicOps{};
     for (self.ops.items) |op| {
-        try op.execute(wrapper);
+        try op.execute(io, wrapper);
     }
 }
 
@@ -241,7 +242,7 @@ const AtomicOps = struct {
         defer fs_file.close();
 
         var fs_file_buffer: [1024]u8 = undefined;
-        var adapter = fs_file.writer(&fs_file_buffer);
+        var adapter = fs_file.writer(io, &fs_file_buffer);
 
         _ = try reader.streamRemaining(&adapter.writer);
 
@@ -273,16 +274,17 @@ const BinaryStreamDisk = struct {
         return disk_getStatus(intf);
     }
 
-    fn disk_read(intf: *fatfs.Disk, buff: [*]u8, sector: fatfs.LBA, count: c_uint) fatfs.Disk.Error!void {
+    fn disk_read(intf: *fatfs.Disk, io: std.Io, buff: [*]u8, sector: fatfs.LBA, count: c_uint) fatfs.Disk.Error!void {
         const bsd: *BinaryStreamDisk = @fieldParentPtr("disk", intf);
 
-        bsd.stream.read(block_size * sector, buff[0 .. count * block_size]) catch |err| {
+        bsd.stream.read(io, block_size * sector, buff[0 .. count * block_size]) catch |err| {
             bsd.disk_error = err;
             return error.IoError;
         };
     }
 
-    fn disk_write(intf: *fatfs.Disk, buff: [*]const u8, sector: fatfs.LBA, count: c_uint) fatfs.Disk.Error!void {
+    fn disk_write(intf: *fatfs.Disk, io: std.Io, buff: [*]const u8, sector: fatfs.LBA, count: c_uint) fatfs.Disk.Error!void {
+        _ = io;
         const bsd: *BinaryStreamDisk = @fieldParentPtr("disk", intf);
 
         bsd.stream.write(block_size * sector, buff[0 .. count * block_size]) catch |err| {
@@ -291,7 +293,8 @@ const BinaryStreamDisk = struct {
         };
     }
 
-    fn disk_ioctl(intf: *fatfs.Disk, cmd: fatfs.IoCtl, buff: [*]u8) fatfs.Disk.Error!void {
+    fn disk_ioctl(intf: *fatfs.Disk, io: std.Io, cmd: fatfs.IoCtl, buff: [*]u8) fatfs.Disk.Error!void {
+        _ = io;
         const bsd: *BinaryStreamDisk = @fieldParentPtr("disk", intf);
 
         switch (cmd) {

@@ -26,9 +26,9 @@ pub const FsOperation = union(enum) {
         contents: dim.Content,
     },
 
-    pub fn execute(op: FsOperation, executor: anytype) !void {
+    pub fn execute(op: FsOperation, io: std.Io, executor: anytype) !void {
         const exec: Executor(@TypeOf(executor)) = .init(executor);
-        try exec.execute(op);
+        try exec.execute(io, op);
     }
 };
 
@@ -42,7 +42,7 @@ fn Executor(comptime T: type) type {
             return .{ .inner = wrapped };
         }
 
-        fn execute(exec: Exec, op: FsOperation) dim.Content.RenderError!void {
+        fn execute(exec: Exec, io: std.Io, op: FsOperation) dim.Content.RenderError!void {
             switch (op) {
                 .make_dir => |data| {
                     try exec.recursive_mkdir(data.path);
@@ -53,10 +53,10 @@ fn Executor(comptime T: type) type {
                         error.FileNotFound => return, // open() already reported the error
                         else => |e| return e,
                     };
-                    defer handle.close();
+                    defer handle.close(io);
 
                     var buffer: [1024]u8 = undefined;
-                    var adapter = handle.reader(&buffer);
+                    var adapter = handle.reader(io, &buffer);
 
                     try exec.add_file(data.path, &adapter.interface);
                 },
@@ -92,10 +92,10 @@ fn Executor(comptime T: type) type {
                                 };
 
                                 var file = try fname.open();
-                                defer file.close();
+                                defer file.close(io);
 
                                 var buffer: [1024]u8 = undefined;
-                                var adapter = file.reader(&buffer);
+                                var adapter = file.reader(io, &buffer);
 
                                 try exec.add_file(path, &adapter.interface);
                             },
@@ -121,7 +121,7 @@ fn Executor(comptime T: type) type {
 
                     var bs: dim.BinaryStream = .init_buffer(buffer);
 
-                    try data.contents.render(&bs);
+                    try data.contents.render(io, &bs);
 
                     var reader: std.Io.Reader = .fixed(buffer);
 
@@ -159,13 +159,13 @@ fn Executor(comptime T: type) type {
 
         fn walk_err(err: (std.fs.Dir.OpenError || std.mem.Allocator.Error)) dim.Content.RenderError {
             return switch (err) {
-                error.InvalidUtf8,
-                error.InvalidWtf8,
                 error.BadPathName,
                 error.NameTooLong => error.InvalidPath,
 
                 error.OutOfMemory => error.OutOfMemory,
                 error.FileNotFound => error.FileNotFound,
+
+                error.Canceled => error.Canceled,
 
                 error.DeviceBusy,
                 error.AccessDenied,
@@ -177,11 +177,7 @@ fn Executor(comptime T: type) type {
                 error.ProcessFdQuotaExceeded,
                 error.SystemFdQuotaExceeded,
                 error.NotDir,
-                error.ProcessNotFound,
                 error.PermissionDenied, => error.IoError,
-                error.ProcessNotFound,
-                error.PermissionDenied,
-                => error.IoError,
             };
         }
     };

@@ -15,7 +15,8 @@ pub fn parse(ctx: dim.Context) !dim.Content {
     }));
 }
 
-fn render(self: *EmptyData, stream: *dim.BinaryStream) dim.Content.RenderError!void {
+fn render(self: *EmptyData, io: std.Io, stream: *dim.BinaryStream) dim.Content.RenderError!void {
     _ = self;
     _ = stream;
+    _ = io;
 }
