@@ -5,10 +5,10 @@ const PasteFile = @This();
 
 file_handle: dim.FileName,
 
-pub fn parse(ctx: dim.Context) !dim.Content {
+pub fn parse(ctx: dim.Context, stdio: std.Io) !dim.Content {
     const pf = try ctx.alloc_object(PasteFile);
     pf.* = .{
-        .file_handle = try ctx.parse_file_name(),
+        .file_handle = try ctx.parse_file_name(stdio),
     };
     return .create_handle(pf, .create(@This(), .{
         .render_fn = render,

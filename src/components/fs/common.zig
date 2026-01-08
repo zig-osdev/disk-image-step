@@ -49,7 +49,7 @@ fn Executor(comptime T: type) type {
                 },
 
                 .copy_file => |data| {
-                    var handle = data.source.open() catch |err| switch (err) {
+                    var handle = data.source.open(io) catch |err| switch (err) {
                         error.FileNotFound => return, // open() already reported the error
                         else => |e| return e,
                     };
@@ -61,11 +61,11 @@ fn Executor(comptime T: type) type {
                     try exec.add_file(data.path, &adapter.interface);
                 },
                 .copy_dir => |data| {
-                    var iter_dir = data.source.open_dir() catch |err| switch (err) {
+                    var iter_dir = data.source.open_dir(io) catch |err| switch (err) {
                         error.FileNotFound => return, // open() already reported the error
                         else => |e| return e,
                     };
-                    defer iter_dir.close();
+                    defer iter_dir.close(io);
 
                     var walker_memory: [16384]u8 = undefined;
                     var temp_allocator: std.heap.FixedBufferAllocator = .init(&walker_memory);
@@ -75,7 +75,7 @@ fn Executor(comptime T: type) type {
                     var walker = try iter_dir.walk(temp_allocator.allocator());
                     defer walker.deinit();
 
-                    while (walker.next() catch |err| return walk_err(err)) |entry| {
+                    while (walker.next(io) catch |err| return walk_err(err)) |entry| {
                         const path = std.fmt.bufPrintZ(&path_memory, "{s}/{s}", .{
                             data.path,
                             entry.path,
@@ -91,7 +91,7 @@ fn Executor(comptime T: type) type {
                                     .rel_path = entry.basename,
                                 };
 
-                                var file = try fname.open();
+                                var file = try fname.open(io);
                                 defer file.close(io);
 
                                 var buffer: [1024]u8 = undefined;
@@ -106,8 +106,8 @@ fn Executor(comptime T: type) type {
 
                             else => {
                                 var realpath_buffer: [std.fs.max_path_bytes]u8 = undefined;
-                                std.log.warn("cannot copy file {!s}: {s} is not a supported file type!", .{
-                                    entry.dir.realpath(entry.path, &realpath_buffer),
+                                std.log.warn("cannot copy file {s}: {s} is not a supported file type!", .{
+                                    if (entry.dir.realPathFile(io,entry.path, &realpath_buffer)) |l| realpath_buffer[0..l] else |e| @errorName(e),
                                     @tagName(entry.kind),
                                 });
                             },
@@ -157,10 +157,9 @@ fn Executor(comptime T: type) type {
             try exec.inner.mkdir(path);
         }
 
-        fn walk_err(err: (std.fs.Dir.OpenError || std.mem.Allocator.Error)) dim.Content.RenderError {
+        fn walk_err(err: (std.Io.Dir.OpenError || std.mem.Allocator.Error)) dim.Content.RenderError {
             return switch (err) {
-                error.BadPathName,
-                error.NameTooLong => error.InvalidPath,
+                error.BadPathName, error.NameTooLong => error.InvalidPath,
 
                 error.OutOfMemory => error.OutOfMemory,
                 error.FileNotFound => error.FileNotFound,
@@ -177,14 +176,15 @@ fn Executor(comptime T: type) type {
                 error.ProcessFdQuotaExceeded,
                 error.SystemFdQuotaExceeded,
                 error.NotDir,
-                error.PermissionDenied, => error.IoError,
+                error.PermissionDenied,
+                => error.IoError,
             };
         }
     };
 }
 
-fn parse_path(ctx: dim.Context) ![:0]const u8 {
-    const path = try ctx.parse_string();
+fn parse_path(ctx: dim.Context, stdio: std.Io) ![:0]const u8 {
+    const path = try ctx.parse_string(stdio);
 
     if (path.len == 0) {
         try ctx.report_nonfatal_error("Path cannot be empty!", .{});
@@ -216,41 +216,41 @@ fn parse_path(ctx: dim.Context) ![:0]const u8 {
     return try normalize(ctx.get_arena(), path);
 }
 
-pub fn parse_ops(ctx: dim.Context, end_seq: []const u8, handler: anytype) !void {
+pub fn parse_ops(ctx: dim.Context, stdio: std.Io, end_seq: []const u8, handler: anytype) !void {
     while (true) {
-        const opsel = try ctx.parse_string();
+        const opsel = try ctx.parse_string(stdio);
         if (std.mem.eql(u8, opsel, end_seq))
             return;
 
         if (std.mem.eql(u8, opsel, "mkdir")) {
-            const path = try parse_path(ctx);
+            const path = try parse_path(ctx, stdio);
             try handler.append_common_op(FsOperation{
                 .make_dir = .{ .path = path },
             });
         } else if (std.mem.eql(u8, opsel, "copy-dir")) {
-            const path = try parse_path(ctx);
-            const src = try ctx.parse_file_name();
+            const path = try parse_path(ctx, stdio);
+            const src = try ctx.parse_file_name(stdio);
 
             try handler.append_common_op(FsOperation{
                 .copy_dir = .{ .path = path, .source = src },
             });
         } else if (std.mem.eql(u8, opsel, "copy-file")) {
-            const path = try parse_path(ctx);
-            const src = try ctx.parse_file_name();
+            const path = try parse_path(ctx, stdio);
+            const src = try ctx.parse_file_name(stdio);
 
             try handler.append_common_op(FsOperation{
                 .copy_file = .{ .path = path, .source = src },
             });
         } else if (std.mem.eql(u8, opsel, "create-file")) {
-            const path = try parse_path(ctx);
-            const size = try ctx.parse_mem_size();
-            const contents = try ctx.parse_content();
+            const path = try parse_path(ctx, stdio);
+            const size = try ctx.parse_mem_size(stdio);
+            const contents = try ctx.parse_content(stdio);
 
             try handler.append_common_op(FsOperation{
                 .create_file = .{ .path = path, .size = size, .contents = contents },
             });
         } else {
-            try handler.parse_custom_op(ctx, opsel);
+            try handler.parse_custom_op(stdio, ctx, opsel);
         }
     }
 }
