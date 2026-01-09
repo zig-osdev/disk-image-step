@@ -149,7 +149,8 @@ fn parsePartition(ctx: dim.Context, stdio: std.Io) !Partition {
 }
 
 pub fn render(table: *PartTable, io: std.Io, stream: *dim.BinaryStream) dim.Content.RenderError!void {
-    const random = std.crypto.random;
+    var r: std.Random.IoSource = .{ .io = io };
+    const random = r.interface();
 
     const lba_len = stream.length / block_size;
     const secondary_pth_lba = lba_len - 1;

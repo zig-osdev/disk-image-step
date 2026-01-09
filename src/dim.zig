@@ -66,16 +66,15 @@ var global_deps_buffer: []u8 = undefined;
 var global_deps_file_writer: std.fs.File.Writer = undefined;
 var global_deps_writer: *std.Io.Writer = undefined;
 
-pub fn main() !u8 {
+pub fn main(init: std.process.Init) !u8 {
     var gpa_impl: std.heap.DebugAllocator(.{}) = .init;
     defer _ = gpa_impl.deinit();
 
     const gpa = gpa_impl.allocator();
 
-    var io: std.Io.Threaded = .init(gpa, .{});
-    const io_iface = io.ioBasic();
+    const io_iface = init.io;
 
-    const opts = try args.parseForCurrentProcess(Options, gpa, .print);
+    const opts = try args.parseForCurrentProcess(Options, gpa, init.minimal.args, .print);
     defer opts.deinit();
 
     const options = opts.options;
@@ -86,8 +85,7 @@ pub fn main() !u8 {
     var var_map: VariableMap = .empty;
     defer var_map.deinit(gpa);
 
-    var env_map = try std.process.getEnvMap(gpa);
-    defer env_map.deinit();
+    var env_map = init.environ_map;
 
     if (options.@"import-env") {
         var iter = env_map.iterator();
@@ -571,7 +569,7 @@ pub const FileName = struct {
             error.BadPathName,
             => return error.InvalidPath,
 
-            error.DeviceBusy,
+            // error.DeviceBusy,
             error.AccessDenied,
             error.SystemResources,
             error.NoDevice,
