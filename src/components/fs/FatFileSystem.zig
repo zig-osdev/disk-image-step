@@ -245,24 +245,11 @@ const AtomicOps = struct {
         defer fs_file.close();
 
         var fs_file_buffer: [1024]u8 = undefined;
-        var adapter = fs_file.writer().adaptToNewApi(&fs_file_buffer);
+        var adapter = fs_file.writer(&fs_file_buffer);
 
-        _ = try reader.streamRemaining(&adapter.new_interface);
+        _ = try reader.streamRemaining(&adapter.writer);
 
-        try adapter.new_interface.flush();
-        // var fifo: std.fifo.LinearFifo(u8, .{ .Static = 8192 }) = .init();
-        // fifo.pump(
-        //     reader,
-        //     fs_file.writer(),
-        // ) catch |err| switch (@as(dim.FileHandle.ReadError || fatfs.File.ReadError.Error, err)) {
-        //     error.Overflow => return error.IoError,
-        //     error.ReadFileFailed => return error.IoError,
-        //     error.Timeout => @panic("implementation bug in fatfs glue"),
-        //     error.DiskErr => return error.IoError,
-        //     error.IntErr => return error.IoError,
-        //     error.Denied => @panic("implementation bug in fatfs glue"),
-        //     error.InvalidObject => @panic("implementation bug in fatfs glue"),
-        // };
+        try adapter.writer.flush();
     }
 };
 

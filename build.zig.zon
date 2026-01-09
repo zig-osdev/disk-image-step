@@ -4,8 +4,9 @@
     .fingerprint = 0x9947018c924eecb2,
     .dependencies = .{
         .zfat = .{
-            .url = "git+https://github.com/der-teufel-programming/zfat.git#6dc7fe3adc22c16623ba63b71ee9d66fdcd6d964",
-            .hash = "zfat-0.15.0-SNNK9RvDTQDQzhcWauy93wy9WxMDToK1se05HVLXXB1_",
+            // .url = "git+https://github.com/der-teufel-programming/zfat.git#6dc7fe3adc22c16623ba63b71ee9d66fdcd6d964",
+            // .hash = "zfat-0.15.0-SNNK9RvDTQDQzhcWauy93wy9WxMDToK1se05HVLXXB1_",
+            .path = "../zfat",
         },
         .args = .{
             .url = "git+https://github.com/ikskuh/zig-args.git#8ae26b44a884ff20dca98ee84c098e8f8e94902f",

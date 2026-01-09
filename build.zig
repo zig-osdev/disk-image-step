@@ -32,9 +32,11 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
         .link_libc = true,
+        .imports = &.{
+            .{ .name = "args", .module = args_mod },
+            .{ .name = "zfat", .module = zfat_mod },
+        },
     });
-    dim_mod.addImport("args", args_mod);
-    dim_mod.addImport("zfat", zfat_mod);
 
     const dim_exe = b.addExecutable(.{
         .name = "dimmer",
