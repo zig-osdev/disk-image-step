@@ -672,7 +672,7 @@ pub const BinaryStream = struct {
 
     virtual_offset: u64 = 0,
 
-    /// Max number of bytes that can be written
+    /// Max number of bytes that an be written
     length: u64,
 
     /// Constructs a BinaryStream from a slice.
@@ -726,15 +726,9 @@ pub const BinaryStream = struct {
         switch (bs.backing) {
             .buffer => |ptr| @memcpy(data, ptr[@intCast(offset)..][0..data.len]),
             .file => |state| {
-                state.file.seekTo(state.base + offset) catch return error.IoError;
-                var buff: [1024]u8 = undefined;
-                var file_reader = state.file.reader(&buff);
-
-                file_reader.interface.readSliceAll(data) catch |err| switch (err) {
-                    error.ReadFailed,
-                    error.EndOfStream,
-                    => return error.IoError,
-                };
+                const len = state.file.pread(data, state.base + offset) catch return error.IoError;
+                if (len != data.len)
+                    return error.Overflow;
             },
         }
     }
@@ -747,28 +741,9 @@ pub const BinaryStream = struct {
         switch (bs.backing) {
             .buffer => |ptr| @memcpy(ptr[@intCast(offset)..][0..data.len], data),
             .file => |state| {
-                state.file.seekTo(state.base + offset) catch return error.IoError;
-                state.file.writeAll(data) catch |err| switch (err) {
-                    error.DiskQuota, error.NoSpaceLeft, error.FileTooBig => return error.Overflow,
-
-                    error.InputOutput,
-                    error.DeviceBusy,
-                    error.InvalidArgument,
-                    error.AccessDenied,
-                    error.BrokenPipe,
-                    error.SystemResources,
-                    error.OperationAborted,
-                    error.NotOpenForWriting,
-                    error.LockViolation,
-                    error.WouldBlock,
-                    error.ConnectionResetByPeer,
-                    error.ProcessNotFound,
-                    error.NoDevice,
-                    error.Unexpected,
-                    error.PermissionDenied,
-                    error.MessageTooBig,
-                    => return error.IoError,
-                };
+                const len = state.file.pwrite(data, state.base + offset) catch return error.IoError;
+                if (len != data.len)
+                    return error.Overflow;
             },
         }
     }

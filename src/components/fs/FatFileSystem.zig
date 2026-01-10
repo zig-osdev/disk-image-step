@@ -105,8 +105,6 @@ fn render(self: *FAT, stream: *dim.BinaryStream) dim.Content.RenderError!void {
         });
     }
 
-    var filesystem: fatfs.FileSystem = undefined;
-
     fatfs.disks[0] = &bsd.disk;
     defer fatfs.disks[0] = null;
 
@@ -128,8 +126,7 @@ fn render(self: *FAT, stream: *dim.BinaryStream) dim.Content.RenderError!void {
         error.MkfsAborted => return error.IoError,
     };
 
-    const ops = self.ops.items;
-
+    var filesystem: fatfs.FileSystem = undefined;
     filesystem.mount("0:", true) catch |err| switch (err) {
         error.NotEnabled => @panic("bug in zfat"),
         error.DiskErr => return error.IoError,
@@ -156,8 +153,7 @@ fn render(self: *FAT, stream: *dim.BinaryStream) dim.Content.RenderError!void {
     }
 
     const wrapper = AtomicOps{};
-
-    for (ops) |op| {
+    for (self.ops.items) |op| {
         try op.execute(wrapper);
     }
 }
@@ -206,7 +202,7 @@ const AtomicOps = struct {
             error.InvalidDrive => @panic("implementation bug in fatfs glue"),
             error.NotEnabled => @panic("implementation bug in fatfs glue"),
             error.NoFilesystem => @panic("implementation bug in fatfs glue"),
-            error.IntErr => return error.IoError,
+            error.IntErr => @panic("Assertion failed and an insanity is detected in the internal process."),
             error.NoPath => @panic("implementation bug in fatfs glue"),
             error.Denied => @panic("implementation bug in fatfs glue"),
         };
@@ -262,6 +258,7 @@ const BinaryStreamDisk = struct {
         .ioctlFn = disk_ioctl,
     },
     stream: *dim.BinaryStream,
+    disk_error: ?(dim.BinaryStream.WriteError || dim.BinaryStream.ReadError) = null,
 
     fn disk_getStatus(intf: *fatfs.Disk) fatfs.Disk.Status {
         _ = intf;
@@ -279,13 +276,19 @@ const BinaryStreamDisk = struct {
     fn disk_read(intf: *fatfs.Disk, buff: [*]u8, sector: fatfs.LBA, count: c_uint) fatfs.Disk.Error!void {
         const bsd: *BinaryStreamDisk = @fieldParentPtr("disk", intf);
 
-        bsd.stream.read(block_size * sector, buff[0 .. count * block_size]) catch return error.IoError;
+        bsd.stream.read(block_size * sector, buff[0 .. count * block_size]) catch |err| {
+            bsd.disk_error = err;
+            return error.IoError;
+        };
     }
 
     fn disk_write(intf: *fatfs.Disk, buff: [*]const u8, sector: fatfs.LBA, count: c_uint) fatfs.Disk.Error!void {
         const bsd: *BinaryStreamDisk = @fieldParentPtr("disk", intf);
 
-        bsd.stream.write(block_size * sector, buff[0 .. count * block_size]) catch return error.IoError;
+        bsd.stream.write(block_size * sector, buff[0 .. count * block_size]) catch |err| {
+            bsd.disk_error = err;
+            return error.IoError;
+        };
     }
 
     fn disk_ioctl(intf: *fatfs.Disk, cmd: fatfs.IoCtl, buff: [*]u8) fatfs.Disk.Error!void {

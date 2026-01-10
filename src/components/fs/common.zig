@@ -28,7 +28,6 @@ pub const FsOperation = union(enum) {
 
     pub fn execute(op: FsOperation, executor: anytype) !void {
         const exec: Executor(@TypeOf(executor)) = .init(executor);
-
         try exec.execute(op);
     }
 };
