@@ -50,7 +50,7 @@ fn Executor(comptime T: type) type {
 
                 .copy_file => |data| {
                     var handle = data.source.open() catch |err| switch (err) {
-                        error.FileNotFound => return, // open() already reporeted the error
+                        error.FileNotFound => return, // open() already reported the error
                         else => |e| return e,
                     };
                     defer handle.close();
@@ -62,7 +62,7 @@ fn Executor(comptime T: type) type {
                 },
                 .copy_dir => |data| {
                     var iter_dir = data.source.open_dir() catch |err| switch (err) {
-                        error.FileNotFound => return, // open() already reporeted the error
+                        error.FileNotFound => return, // open() already reported the error
                         else => |e| return e,
                     };
                     defer iter_dir.close();
@@ -86,6 +86,7 @@ fn Executor(comptime T: type) type {
                         switch (entry.kind) {
                             .file => {
                                 const fname: dim.FileName = .{
+                                    .env = data.source.env,
                                     .root_dir = entry.dir,
                                     .rel_path = entry.basename,
                                 };

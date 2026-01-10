@@ -169,6 +169,8 @@ pub fn main() !u8 {
         return 1;
     }
 
+    env.mode = .execute;
+
     {
         var output_file = try current_dir.createFile(output_path, .{ .read = true });
         defer output_file.close();
@@ -182,6 +184,10 @@ pub fn main() !u8 {
 
     if (global_deps_file != null) {
         try global_deps_writer.writeAll("\n");
+    }
+
+    if (env.error_flag) {
+        return 1;
     }
 
     return 0;
@@ -247,6 +253,7 @@ pub const Context = struct {
         const abs_path = try ctx.env.parser.get_include_path(ctx.env.arena, rel_path);
 
         return .{
+            .env = ctx.env,
             .root_dir = ctx.env.include_base,
             .rel_path = abs_path,
         };
@@ -376,6 +383,7 @@ const Environment = struct {
     include_base: std.fs.Dir,
     vars: *const VariableMap,
     error_flag: bool = false,
+    mode: enum { parse, execute } = .parse,
 
     io: Parser.IO = .{
         .fetch_file_fn = fetch_file,
@@ -390,7 +398,10 @@ const Environment = struct {
 
     fn report_error(env: *Environment, comptime fmt: []const u8, params: anytype) error{OutOfMemory}!void {
         env.error_flag = true;
-        std.log.err("PARSE ERROR: " ++ fmt, params);
+        switch (env.mode) {
+            .parse => std.log.err("PARSE ERROR: " ++ fmt, params),
+            .execute => std.log.err("EXECUTE ERROR: " ++ fmt, params),
+        }
     }
 
     fn fetch_file(io: *const Parser.IO, allocator: std.mem.Allocator, path: []const u8) error{ FileNotFound, IoError, OutOfMemory, InvalidPath }![]const u8 {
@@ -411,7 +422,11 @@ const Environment = struct {
         };
         errdefer allocator.free(contents);
 
-        const name: FileName = .{ .root_dir = env.include_base, .rel_path = path };
+        const name: FileName = .{
+            .env = undefined,
+            .root_dir = env.include_base,
+            .rel_path = path,
+        };
         try name.declare_dependency();
 
         return contents;
@@ -476,6 +491,7 @@ pub const Content = struct {
 };
 
 pub const FileName = struct {
+    env: *Environment,
     root_dir: std.fs.Dir,
     rel_path: []const u8,
 
@@ -485,10 +501,10 @@ pub const FileName = struct {
         const file = name.root_dir.openFile(name.rel_path, .{}) catch |err| switch (err) {
             error.FileNotFound => {
                 var buffer: [std.fs.max_path_bytes]u8 = undefined;
-                std.log.err("failed to open \"{f}/{f}\": not found", .{
+                name.env.report_error("failed to open \"{f}/{f}\": not found", .{
                     std.zig.fmtString(name.root_dir.realpath(".", &buffer) catch |e| @errorName(e)),
                     std.zig.fmtString(name.rel_path),
-                });
+                }) catch |e| std.debug.assert(e == error.OutOfMemory);
                 return error.FileNotFound;
             },
 
@@ -532,10 +548,10 @@ pub const FileName = struct {
         const dir = name.root_dir.openDir(name.rel_path, .{ .iterate = true }) catch |err| switch (err) {
             error.FileNotFound => {
                 var buffer: [std.fs.max_path_bytes]u8 = undefined;
-                std.log.err("failed to open \"{f}/{f}\": not found", .{
+                name.env.report_error("failed to open \"{f}/{f}\": not found", .{
                     std.zig.fmtString(name.root_dir.realpath(".", &buffer) catch |e| @errorName(e)),
                     std.zig.fmtString(name.rel_path),
-                });
+                }) catch |e| std.debug.assert(e == error.OutOfMemory);
                 return error.FileNotFound;
             },
 
