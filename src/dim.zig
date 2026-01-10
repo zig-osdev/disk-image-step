@@ -31,20 +31,28 @@ const Options = struct {
     script: ?[]const u8 = null,
     @"import-env": bool = false,
     @"deps-file": ?[]const u8 = null,
+    @"script-root": ?[]const u8 = null,
 };
 
 const usage =
     \\dim OPTIONS [VARS]
     \\
     \\OPTIONS:
-    \\ --output <path>
-    \\   mandatory: where to store the output file
-    \\ --size <size>
-    \\   mandatory: how big is the resulting disk image? allowed suffixes: k,K,M,G
-    \\ --script <path>
-    \\   mandatory: which script file to execute?
-    \\[--import-env]
-    \\   optional: if set, imports the current process environment into the variables
+    \\  --output <path>
+    \\    mandatory: where to store the output file
+    \\  --size <size>
+    \\    mandatory: how big is the resulting disk image? allowed suffixes: k,K,M,G
+    \\  --script <path>
+    \\    mandatory: which script file to execute?
+    \\  --deps-file <path>
+    \\    optional:  writes a Makefile snippet containing the additional file dependencies
+    \\  --import-env
+    \\    optional:  if set, imports the current process environment into the variables
+    \\  --script-root <path>
+    \\    optional:  if given, will make dim behave like --script would have this <path> instead of the actual one.
+    \\               this is especially useful when you use the Zig build integration which may pass relative paths
+    \\               to the build root, but the script is stored inside the .zig-cache folder.
+    \\
     \\VARS:
     \\{ KEY=VALUE }*
     \\  multiple ≥ 0: Sets variable KEY to VALUE
@@ -155,7 +163,7 @@ pub fn main() !u8 {
     env.parser = &parser;
 
     try parser.push_source(.{
-        .path = script_path,
+        .path = options.@"script-root" orelse script_path,
         .contents = script_source,
     });
 

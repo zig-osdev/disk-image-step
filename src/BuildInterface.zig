@@ -37,6 +37,7 @@ pub fn createDisk(dimmer: Interface, size: u64, content: Content) std.Build.Lazy
     compile_script.addArg(b.fmt("--size={d}", .{size}));
 
     compile_script.addPrefixedFileArg("--script=", script_file);
+    compile_script.addPrefixedDirectoryArg("--script-root=", .{ .cwd_relative = "." });
 
     const result_file = compile_script.addPrefixedOutputFileArg("--output=", "disk.img");
 
