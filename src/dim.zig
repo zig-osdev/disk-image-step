@@ -428,7 +428,7 @@ const Environment = struct {
 ///
 ///
 pub const Content = struct {
-    pub const RenderError = FileName.OpenError || FileHandle.ReadError || BinaryStream.WriteError || error{
+    pub const RenderError = FileName.OpenError || std.Io.Reader.Error || BinaryStream.WriteError || error{
         ConfigurationError,
         OutOfBounds,
         OutOfMemory,
@@ -626,10 +626,6 @@ pub const FileName = struct {
 };
 
 pub const FileHandle = struct {
-    pub const ReadError = error{ReadFileFailed};
-
-    pub const Reader = std.io.GenericReader(std.fs.File, ReadError, read_some);
-
     file: std.fs.File,
 
     pub fn close(fd: *FileHandle) void {
@@ -637,29 +633,8 @@ pub const FileHandle = struct {
         fd.* = undefined;
     }
 
-    pub fn reader(fd: FileHandle) Reader {
-        return .{ .context = fd.file };
-    }
-
-    fn read_some(file: std.fs.File, data: []u8) ReadError!usize {
-        return file.read(data) catch |err| switch (err) {
-            error.InputOutput,
-            error.AccessDenied,
-            error.BrokenPipe,
-            error.SystemResources,
-            error.OperationAborted,
-            error.LockViolation,
-            error.WouldBlock,
-            error.ConnectionResetByPeer,
-            error.ProcessNotFound,
-            error.Unexpected,
-            error.IsDir,
-            error.ConnectionTimedOut,
-            error.NotOpenForReading,
-            error.SocketNotConnected,
-            error.Canceled,
-            => return error.ReadFileFailed,
-        };
+    pub fn reader(fd: FileHandle, buffer: []u8) std.fs.File.Reader {
+        return fd.file.reader(buffer);
     }
 };
 

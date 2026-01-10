@@ -55,9 +55,10 @@ fn Executor(comptime T: type) type {
                     };
                     defer handle.close();
 
-                    var adapter = handle.reader().adaptToNewApi(&.{});
+                    var buffer: [1024]u8 = undefined;
+                    var adapter = handle.reader(&buffer);
 
-                    try exec.add_file(data.path, &adapter.new_interface);
+                    try exec.add_file(data.path, &adapter.interface);
                 },
                 .copy_dir => |data| {
                     var iter_dir = data.source.open_dir() catch |err| switch (err) {
@@ -92,9 +93,10 @@ fn Executor(comptime T: type) type {
                                 var file = try fname.open();
                                 defer file.close();
 
-                                var adapter = file.reader().adaptToNewApi(&.{});
+                                var buffer: [1024]u8 = undefined;
+                                var adapter = file.reader(&buffer);
 
-                                try exec.add_file(path, &adapter.new_interface);
+                                try exec.add_file(path, &adapter.interface);
                             },
 
                             .directory => {
