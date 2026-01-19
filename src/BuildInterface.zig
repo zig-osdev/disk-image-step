@@ -185,6 +185,9 @@ const ContentWriter = struct {
                     if (part.name) |name| {
                         try cw.code.print("    name \"{f}\"\n", .{std.zig.fmtString(name)});
                     }
+                    if (part.part_guid) |pg| {
+                        try cw.code.print("    guid \"{s}\"", .{&pg});
+                    }
                     if (part.offset) |offset| {
                         try cw.code.print("    offset {d}\n", .{offset});
                     }
@@ -416,6 +419,7 @@ pub const GptPartTable = struct {
             guid: [36]u8,
         },
         name: ?[]const u8 = null,
+        part_guid: ?[36]u8 = null,
         size: ?u64 = null,
         offset: ?u64 = null,
         data: Content,
