@@ -186,9 +186,9 @@ test Tokenizer {
     var offset: u32 = 0;
     for (seq) |expected| {
         const actual = (try tokenizer.next()) orelse return error.Unexpected;
-        errdefer std.debug.print("unexpected token: .{} \"{}\"\n", .{
+        errdefer std.debug.print("unexpected token: .{f} \"{f}\"\n", .{
             std.zig.fmtId(@tagName(actual.type)),
-            std.zig.fmtEscapes(tokenizer.source[actual.offset..][0..actual.len]),
+            std.zig.fmtString(tokenizer.source[actual.offset..][0..actual.len]),
         });
         try std.testing.expectEqualStrings(expected.@"1", tokenizer.get_text(actual));
         try std.testing.expectEqual(offset, actual.offset);

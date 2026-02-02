@@ -28,7 +28,6 @@ pub const FsOperation = union(enum) {
 
     pub fn execute(op: FsOperation, executor: anytype) !void {
         const exec: Executor(@TypeOf(executor)) = .init(executor);
-
         try exec.execute(op);
     }
 };
@@ -51,16 +50,19 @@ fn Executor(comptime T: type) type {
 
                 .copy_file => |data| {
                     var handle = data.source.open() catch |err| switch (err) {
-                        error.FileNotFound => return, // open() already reporeted the error
+                        error.FileNotFound => return, // open() already reported the error
                         else => |e| return e,
                     };
                     defer handle.close();
 
-                    try exec.add_file(data.path, handle.reader());
+                    var buffer: [1024]u8 = undefined;
+                    var adapter = handle.reader(&buffer);
+
+                    try exec.add_file(data.path, &adapter.interface);
                 },
                 .copy_dir => |data| {
                     var iter_dir = data.source.open_dir() catch |err| switch (err) {
-                        error.FileNotFound => return, // open() already reporeted the error
+                        error.FileNotFound => return, // open() already reported the error
                         else => |e| return e,
                     };
                     defer iter_dir.close();
@@ -84,6 +86,7 @@ fn Executor(comptime T: type) type {
                         switch (entry.kind) {
                             .file => {
                                 const fname: dim.FileName = .{
+                                    .env = data.source.env,
                                     .root_dir = entry.dir,
                                     .rel_path = entry.basename,
                                 };
@@ -91,7 +94,10 @@ fn Executor(comptime T: type) type {
                                 var file = try fname.open();
                                 defer file.close();
 
-                                try exec.add_file(path, file.reader());
+                                var buffer: [1024]u8 = undefined;
+                                var adapter = file.reader(&buffer);
+
+                                try exec.add_file(path, &adapter.interface);
                             },
 
                             .directory => {
@@ -117,14 +123,14 @@ fn Executor(comptime T: type) type {
 
                     try data.contents.render(&bs);
 
-                    var fbs: std.io.FixedBufferStream([]u8) = .{ .buffer = buffer, .pos = 0 };
+                    var reader: std.Io.Reader = .fixed(buffer);
 
-                    try exec.add_file(data.path, fbs.reader());
+                    try exec.add_file(data.path, &reader);
                 },
             }
         }
 
-        fn add_file(exec: Exec, path: [:0]const u8, reader: anytype) !void {
+        fn add_file(exec: Exec, path: [:0]const u8, reader: *std.Io.Reader) !void {
             if (std.fs.path.dirnamePosix(path)) |dir| {
                 try exec.recursive_mkdir(dir);
             }
@@ -143,7 +149,7 @@ fn Executor(comptime T: type) type {
             try exec.inner_mkdir(path);
         }
 
-        fn inner_mkfile(exec: Exec, path: []const u8, reader: anytype) dim.Content.RenderError!void {
+        fn inner_mkfile(exec: Exec, path: []const u8, reader: *std.Io.Reader) dim.Content.RenderError!void {
             try exec.inner.mkfile(path, reader);
         }
 
@@ -171,6 +177,9 @@ fn Executor(comptime T: type) type {
                 error.ProcessFdQuotaExceeded => error.IoError,
                 error.SystemFdQuotaExceeded => error.IoError,
                 error.NotDir => error.IoError,
+                error.ProcessNotFound,
+                error.PermissionDenied,
+                => error.IoError,
             };
         }
     };
@@ -185,23 +194,23 @@ fn parse_path(ctx: dim.Context) ![:0]const u8 {
     }
 
     if (!std.mem.startsWith(u8, path, "/")) {
-        try ctx.report_nonfatal_error("Path '{}' did not start with a \"/\"", .{
-            std.zig.fmtEscapes(path),
+        try ctx.report_nonfatal_error("Path '{f}' did not start with a \"/\"", .{
+            std.zig.fmtString(path),
         });
     }
 
     for (path) |c| {
         if (c < 0x20 or c == 0x7F or c == '\\') {
-            try ctx.report_nonfatal_error("Path '{}' contains invalid character 0x{X:0>2}", .{
-                std.zig.fmtEscapes(path),
+            try ctx.report_nonfatal_error("Path '{f}' contains invalid character 0x{X:0>2}", .{
+                std.zig.fmtString(path),
                 c,
             });
         }
     }
 
     _ = std.unicode.Utf8View.init(path) catch |err| {
-        try ctx.report_nonfatal_error("Path '{}' is not a valid UTF-8 string: {s}", .{
-            std.zig.fmtEscapes(path),
+        try ctx.report_nonfatal_error("Path '{f}' is not a valid UTF-8 string: {s}", .{
+            std.zig.fmtString(path),
             @errorName(err),
         });
     };
@@ -249,8 +258,8 @@ pub fn parse_ops(ctx: dim.Context, end_seq: []const u8, handler: anytype) !void 
 }
 
 fn normalize(allocator: std.mem.Allocator, src_path: []const u8) ![:0]const u8 {
-    var list = std.ArrayList([]const u8).init(allocator);
-    defer list.deinit();
+    var list: std.ArrayList([]const u8) = .empty;
+    defer list.deinit(allocator);
 
     var parts = std.mem.tokenizeAny(u8, src_path, "\\/");
 
@@ -263,7 +272,7 @@ fn normalize(allocator: std.mem.Allocator, src_path: []const u8) ![:0]const u8 {
             _ = list.pop();
         } else {
             // this is an actual "descend"
-            try list.append(part);
+            try list.append(allocator, part);
         }
     }
 

@@ -18,6 +18,8 @@ pub fn build(b: *std.Build) void {
         .mkfs = true,
         .exfat = true,
         .label = true,
+        .target = target,
+        .optimize = optimize,
     });
 
     const zfat_mod = zfat_dep.module("zfat");
@@ -30,9 +32,11 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
         .link_libc = true,
+        .imports = &.{
+            .{ .name = "args", .module = args_mod },
+            .{ .name = "zfat", .module = zfat_mod },
+        },
     });
-    dim_mod.addImport("args", args_mod);
-    dim_mod.addImport("zfat", zfat_mod);
 
     const dim_exe = b.addExecutable(.{
         .name = "dimmer",
@@ -53,6 +57,7 @@ pub fn build(b: *std.Build) void {
         const script_test = b.step(step_name, b.fmt("Run {s} behaviour test", .{script}));
 
         const run_behaviour = b.addRunArtifact(dim_exe);
+        run_behaviour.setCwd(b.path(script).dirname());
         run_behaviour.addArg("--output");
         _ = run_behaviour.addOutputFileArg("disk.img");
         run_behaviour.addArg("--script");

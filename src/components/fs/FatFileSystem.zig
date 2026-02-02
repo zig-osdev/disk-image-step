@@ -14,7 +14,7 @@ format_as: FatType,
 label: ?[]const u8 = null,
 fats: ?fatfs.FatTables = null,
 rootdir_size: ?c_uint = null,
-ops: std.ArrayList(common.FsOperation),
+ops: std.array_list.Managed(common.FsOperation),
 sector_align: ?c_uint = null,
 cluster_size: ?u32 = null,
 
@@ -88,7 +88,7 @@ fn render(self: *FAT, stream: *dim.BinaryStream) dim.Content.RenderError!void {
 
     if (stream.length < min_size) {
         // TODO(fqu): Report fatal erro!
-        std.log.err("cannot format {} bytes with {s}: min required size is {}", .{
+        std.log.err("cannot format {f} bytes with {s}: min required size is {f}", .{
             @as(dim.DiskSize, @enumFromInt(stream.length)),
             @tagName(self.format_as),
             @as(dim.DiskSize, @enumFromInt(min_size)),
@@ -98,14 +98,12 @@ fn render(self: *FAT, stream: *dim.BinaryStream) dim.Content.RenderError!void {
 
     if (stream.length > max_size) {
         // TODO(fqu): Report warning
-        std.log.warn("will not use all available space: available space is {}, but maximum size for {s} is {}", .{
+        std.log.warn("will not use all available space: available space is {f}, but maximum size for {s} is {f}", .{
             @as(dim.DiskSize, @enumFromInt(stream.length)),
             @tagName(self.format_as),
             @as(dim.DiskSize, @enumFromInt(min_size)),
         });
     }
-
-    var filesystem: fatfs.FileSystem = undefined;
 
     fatfs.disks[0] = &bsd.disk;
     defer fatfs.disks[0] = null;
@@ -128,8 +126,7 @@ fn render(self: *FAT, stream: *dim.BinaryStream) dim.Content.RenderError!void {
         error.MkfsAborted => return error.IoError,
     };
 
-    const ops = self.ops.items;
-
+    var filesystem: fatfs.FileSystem = undefined;
     filesystem.mount("0:", true) catch |err| switch (err) {
         error.NotEnabled => @panic("bug in zfat"),
         error.DiskErr => return error.IoError,
@@ -147,8 +144,8 @@ fn render(self: *FAT, stream: *dim.BinaryStream) dim.Content.RenderError!void {
                 return error.IoError;
             }
         } else {
-            std.log.err("label \"{}\" is {} characters long, but only up to {} are permitted.", .{
-                std.zig.fmtEscapes(label),
+            std.log.err("label \"{f}\" is {} characters long, but only up to {} are permitted.", .{
+                std.zig.fmtString(label),
                 label.len,
                 max_label_len,
             });
@@ -156,8 +153,7 @@ fn render(self: *FAT, stream: *dim.BinaryStream) dim.Content.RenderError!void {
     }
 
     const wrapper = AtomicOps{};
-
-    for (ops) |op| {
+    for (self.ops.items) |op| {
         try op.execute(wrapper);
     }
 }
@@ -206,13 +202,13 @@ const AtomicOps = struct {
             error.InvalidDrive => @panic("implementation bug in fatfs glue"),
             error.NotEnabled => @panic("implementation bug in fatfs glue"),
             error.NoFilesystem => @panic("implementation bug in fatfs glue"),
-            error.IntErr => return error.IoError,
+            error.IntErr => @panic("Assertion failed and an insanity is detected in the internal process."),
             error.NoPath => @panic("implementation bug in fatfs glue"),
             error.Denied => @panic("implementation bug in fatfs glue"),
         };
     }
 
-    pub fn mkfile(ops: AtomicOps, path: []const u8, reader: anytype) dim.Content.RenderError!void {
+    pub fn mkfile(ops: AtomicOps, path: []const u8, reader: *std.Io.Reader) dim.Content.RenderError!void {
         _ = ops;
 
         var path_buffer: [max_path_len:0]u8 = undefined;
@@ -244,19 +240,12 @@ const AtomicOps = struct {
         };
         defer fs_file.close();
 
-        var fifo: std.fifo.LinearFifo(u8, .{ .Static = 8192 }) = .init();
-        fifo.pump(
-            reader,
-            fs_file.writer(),
-        ) catch |err| switch (@as(dim.FileHandle.ReadError || fatfs.File.ReadError.Error, err)) {
-            error.Overflow => return error.IoError,
-            error.ReadFileFailed => return error.IoError,
-            error.Timeout => @panic("implementation bug in fatfs glue"),
-            error.DiskErr => return error.IoError,
-            error.IntErr => return error.IoError,
-            error.Denied => @panic("implementation bug in fatfs glue"),
-            error.InvalidObject => @panic("implementation bug in fatfs glue"),
-        };
+        var fs_file_buffer: [1024]u8 = undefined;
+        var adapter = fs_file.writer(&fs_file_buffer);
+
+        _ = try reader.streamRemaining(&adapter.writer);
+
+        try adapter.writer.flush();
     }
 };
 
@@ -269,6 +258,7 @@ const BinaryStreamDisk = struct {
         .ioctlFn = disk_ioctl,
     },
     stream: *dim.BinaryStream,
+    disk_error: ?(dim.BinaryStream.WriteError || dim.BinaryStream.ReadError) = null,
 
     fn disk_getStatus(intf: *fatfs.Disk) fatfs.Disk.Status {
         _ = intf;
@@ -286,13 +276,19 @@ const BinaryStreamDisk = struct {
     fn disk_read(intf: *fatfs.Disk, buff: [*]u8, sector: fatfs.LBA, count: c_uint) fatfs.Disk.Error!void {
         const bsd: *BinaryStreamDisk = @fieldParentPtr("disk", intf);
 
-        bsd.stream.read(block_size * sector, buff[0 .. count * block_size]) catch return error.IoError;
+        bsd.stream.read(block_size * sector, buff[0 .. count * block_size]) catch |err| {
+            bsd.disk_error = err;
+            return error.IoError;
+        };
     }
 
     fn disk_write(intf: *fatfs.Disk, buff: [*]const u8, sector: fatfs.LBA, count: c_uint) fatfs.Disk.Error!void {
         const bsd: *BinaryStreamDisk = @fieldParentPtr("disk", intf);
 
-        bsd.stream.write(block_size * sector, buff[0 .. count * block_size]) catch return error.IoError;
+        bsd.stream.write(block_size * sector, buff[0 .. count * block_size]) catch |err| {
+            bsd.disk_error = err;
+            return error.IoError;
+        };
     }
 
     fn disk_ioctl(intf: *fatfs.Disk, cmd: fatfs.IoCtl, buff: [*]u8) fatfs.Disk.Error!void {
