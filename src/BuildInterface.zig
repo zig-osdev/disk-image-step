@@ -308,11 +308,25 @@ const ContentWriter = struct {
             .dependency,
             .src_path,
             => {
+
                 // We can safely call getPath2 as we can fully resolve the path
                 // already
-                const full_path = path.getPath2(cw.wfs.step.owner, &cw.wfs.step);
+                const rel_path = path.getPath2(cw.wfs.step.owner, &cw.wfs.step);
 
-                std.debug.assert(std.fs.path.isAbsolute(full_path));
+                const full_path = if (!std.fs.path.isAbsolute(rel_path))
+                    std.fs.cwd().realpathAlloc(cw.wfs.step.owner.allocator, rel_path) catch @panic("oom")
+                else
+                    rel_path;
+
+                if (!std.fs.path.isAbsolute(full_path)) {
+                    const cwd = std.fs.cwd().realpathAlloc(cw.wfs.step.owner.allocator, ".") catch @panic("oom");
+                    std.debug.print("non-absolute path detected for {t}: cwd=\"{f}\" path=\"{f}\"\n", .{
+                        path,
+                        std.zig.fmtString(cwd),
+                        std.zig.fmtString(full_path),
+                    });
+                    @panic("non-absolute path detected!");
+                }
 
                 try writer.print("{f}", .{
                     fmtPath(full_path),
