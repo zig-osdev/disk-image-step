@@ -26,7 +26,7 @@ pub fn createDisk(dimmer: Interface, size: u64, content: Content) std.Build.Lazy
 
     const write_files = b.addWriteFiles();
 
-    const script_source, const variables = renderContent(write_files, b.allocator, content);
+    const script_source, const variables = renderContent(write_files, b.allocator, content, dimmer.builder.graph.io);
 
     const script_file = write_files.add("image.dis", script_source);
 
@@ -69,6 +69,7 @@ fn renderContent(
     wfs: *std.Build.Step.WriteFile,
     allocator: std.mem.Allocator,
     content: Content,
+    io: std.Io,
 ) struct { []const u8, ContentWriter.VariableMap } {
     var code: std.Io.Writer.Allocating = .init(allocator);
     defer code.deinit();
@@ -81,7 +82,7 @@ fn renderContent(
         .vars = &variables,
     };
 
-    cw.render(content) catch @panic("out of memory");
+    cw.render(content, io) catch @panic("out of memory");
 
     const source = std.mem.trim(
         u8,
@@ -109,7 +110,7 @@ const ContentWriter = struct {
     code: *std.Io.Writer,
     vars: *VariableMap,
 
-    fn render(cw: ContentWriter, content: Content) !void {
+    fn render(cw: ContentWriter, content: Content, io: std.Io) !void {
         // Always insert some padding before and after:
         try cw.code.writeAll(" ");
         errdefer cw.code.writeAll(" ") catch {};
@@ -124,7 +125,7 @@ const ContentWriter = struct {
             },
 
             .paste_file => |data| {
-                try cw.code.print("paste-file {f}", .{cw.fmtLazyPath(data, .file)});
+                try cw.code.print("paste-file {f}", .{cw.fmtLazyPath(data, .file, io)});
             },
 
             .mbr_part_table => |data| {
@@ -132,7 +133,7 @@ const ContentWriter = struct {
 
                 if (data.bootloader) |loader| {
                     try cw.code.writeAll("  bootloader ");
-                    try cw.render(loader.*);
+                    try cw.render(loader.*, io);
                     try cw.code.writeAll("\n");
                 }
 
@@ -153,7 +154,7 @@ const ContentWriter = struct {
                             try cw.code.print("    size {d}\n", .{size});
                         }
                         try cw.code.writeAll("    contains");
-                        try cw.render(part.data);
+                        try cw.render(part.data, io);
                         try cw.code.writeAll("\n");
                         try cw.code.writeAll("  endpart\n");
                     } else {
@@ -195,7 +196,7 @@ const ContentWriter = struct {
                         try cw.code.print("    size {d}\n", .{size});
                     }
                     try cw.code.writeAll("    contains");
-                    try cw.render(part.data);
+                    try cw.render(part.data, io);
                     try cw.code.writeAll("\n");
                     try cw.code.writeAll("  endpart\n");
                 }
@@ -213,14 +214,14 @@ const ContentWriter = struct {
                     });
                 }
 
-                try cw.renderFileSystemTree(data.tree);
+                try cw.renderFileSystemTree(data.tree, io);
 
                 try cw.code.writeAll("endfat\n");
             },
         }
     }
 
-    fn renderFileSystemTree(cw: ContentWriter, fs: FileSystem) !void {
+    fn renderFileSystemTree(cw: ContentWriter, fs: FileSystem, io: std.Io) !void {
         for (fs.items) |item| {
             switch (item) {
                 .empty_dir => |dir| try cw.code.print("mkdir {f}\n", .{
@@ -229,16 +230,16 @@ const ContentWriter = struct {
 
                 .copy_dir => |copy| try cw.code.print("copy-dir {f} {f}\n", .{
                     fmtPath(copy.destination),
-                    cw.fmtLazyPath(copy.source, .directory),
+                    cw.fmtLazyPath(copy.source, .directory, io),
                 }),
 
                 .copy_file => |copy| try cw.code.print("copy-file {f} {f}\n", .{
                     fmtPath(copy.destination),
-                    cw.fmtLazyPath(copy.source, .file),
+                    cw.fmtLazyPath(copy.source, .file, io),
                 }),
 
                 .include_script => |script| try cw.code.print("!include {f}\n", .{
-                    cw.fmtLazyPath(script, .file),
+                    cw.fmtLazyPath(script, .file, io),
                 }),
             }
         }
@@ -285,7 +286,7 @@ const ContentWriter = struct {
         }
     };
     const LazyPathFormatter = std.fmt.Alt(
-        struct { ContentWriter, std.Build.LazyPath, UsageHint },
+        struct { ContentWriter, std.Build.LazyPath, UsageHint, std.Io },
         formatLazyPath,
     );
     const UsageHint = enum { file, directory };
@@ -294,8 +295,9 @@ const ContentWriter = struct {
         cw: ContentWriter,
         path: std.Build.LazyPath,
         hint: UsageHint,
+        io: std.Io,
     ) LazyPathFormatter {
-        return .{ .data = .{ cw, path, hint } };
+        return .{ .data = .{ cw, path, hint, io } };
     }
 
     fn fmtPath(path: []const u8) PathFormatter {
@@ -303,10 +305,10 @@ const ContentWriter = struct {
     }
 
     fn formatLazyPath(
-        data: struct { ContentWriter, std.Build.LazyPath, UsageHint },
+        data: struct { ContentWriter, std.Build.LazyPath, UsageHint, std.Io },
         writer: *std.Io.Writer,
     ) std.Io.Writer.Error!void {
-        const cw, const path, const hint = data;
+        const cw, const path, const hint, const io = data;
 
         switch (path) {
             .cwd_relative,
@@ -319,12 +321,12 @@ const ContentWriter = struct {
                 const rel_path = path.getPath2(cw.wfs.step.owner, &cw.wfs.step);
 
                 const full_path = if (!std.fs.path.isAbsolute(rel_path))
-                    std.fs.cwd().realpathAlloc(cw.wfs.step.owner.allocator, rel_path) catch @panic("oom")
+                    std.Io.Dir.cwd().realPathFileAlloc(io, rel_path, cw.wfs.step.owner.allocator) catch @panic("oom")
                 else
                     rel_path;
 
                 if (!std.fs.path.isAbsolute(full_path)) {
-                    const cwd = std.fs.cwd().realpathAlloc(cw.wfs.step.owner.allocator, ".") catch @panic("oom");
+                    const cwd = std.Io.Dir.cwd().realPathFileAlloc(io, ".", cw.wfs.step.owner.allocator) catch @panic("oom");
                     std.debug.print("non-absolute path detected for {t}: cwd=\"{f}\" path=\"{f}\"\n", .{
                         path,
                         std.zig.fmtString(cwd),

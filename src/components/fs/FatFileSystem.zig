@@ -242,11 +242,11 @@ const AtomicOps = struct {
         defer fs_file.close();
 
         var fs_file_buffer: [1024]u8 = undefined;
-        var adapter = fs_file.writer(io, &fs_file_buffer);
+        var adapter = fs_file.writer( &fs_file_buffer);
 
-        _ = try reader.streamRemaining(&adapter.writer);
+        _ = try reader.streamRemaining(&adapter.interface);
 
-        try adapter.writer.flush();
+        try adapter.interface.flush();
     }
 };
 

@@ -63,7 +63,7 @@ const VariableMap = std.StringArrayHashMapUnmanaged([]const u8);
 
 var global_deps_file: ?std.Io.File = null;
 var global_deps_buffer: []u8 = undefined;
-var global_deps_file_writer: std.fs.File.Writer = undefined;
+var global_deps_file_writer: std.Io.File.Writer = undefined;
 var global_deps_writer: *std.Io.Writer = undefined;
 
 pub fn main(init: std.process.Init) !u8 {
@@ -453,7 +453,7 @@ const Environment = struct {
 ///
 ///
 pub const Content = struct {
-    pub const RenderError = FileName.OpenError || std.Io.Reader.Error || BinaryStream.WriteError || error{
+    pub const RenderError = FileName.OpenError || std.Io.Reader.Error || std.Io.Writer.Error || BinaryStream.WriteError || error{
         ConfigurationError,
         OutOfBounds,
         OutOfMemory,
@@ -511,7 +511,7 @@ pub const FileName = struct {
         const file = name.root_dir.openFile(stdio, name.rel_path, .{}) catch |err| switch (err) {
             error.FileNotFound => {
                 var buffer: [std.fs.max_path_bytes]u8 = undefined;
-                name.env.report_error("failed to open \"{f}/{f}\": not found", .{
+                name.env.report_error("failed to open \"{f}\": not found", .{
                     std.zig.fmtString(if (name.root_dir.realPath(stdio, &buffer)) |l| buffer[0..l] else |e| @errorName(e)),
                 }) catch |e| std.debug.assert(e == error.OutOfMemory);
                 return error.FileNotFound;
@@ -641,9 +641,9 @@ pub const FileName = struct {
         var file_reader = handle.file.reader(io, &.{});
 
         var buffer: [8192]u8 = undefined;
-        var writer = stream.writer(io).adaptToNewApi(&buffer);
+        var writer = stream.writer(io,&buffer);
 
-        _ = try file_reader.interface.streamRemaining(&writer.new_interface);
+        _ = try file_reader.interface.streamRemaining(&writer.interface);
     }
 };
 
@@ -655,7 +655,7 @@ pub const FileHandle = struct {
         fd.* = undefined;
     }
 
-    pub fn reader(fd: FileHandle, io: std.Io, buffer: []u8) std.fs.File.Reader {
+    pub fn reader(fd: FileHandle, io: std.Io, buffer: []u8) std.Io.File.Reader {
         return fd.file.reader(io, buffer);
     }
 };
@@ -723,7 +723,7 @@ pub const BinaryStream = struct {
         switch (bs.backing) {
             .buffer => |ptr| @memcpy(data, ptr[@intCast(offset)..][0..data.len]),
             .file => |state| {
-                const len = state.file.pread(data, state.base + offset) catch return error.IoError;
+                const len = state.file.readPositionalAll(io, data, state.base + offset) catch return error.IoError;
                 if (len != data.len)
                     return error.Overflow;
             },
@@ -738,9 +738,7 @@ pub const BinaryStream = struct {
         switch (bs.backing) {
             .buffer => |ptr| @memcpy(ptr[@intCast(offset)..][0..data.len], data),
             .file => |state| {
-                const len = state.file.pwrite(data, state.base + offset) catch return error.IoError;
-                if (len != data.len)
-                    return error.Overflow;
+                state.file.writePositionalAll(io,data, state.base + offset) catch return error.IoError;
             },
         }
     }
@@ -751,13 +749,13 @@ pub const BinaryStream = struct {
         bs.virtual_offset = offset;
     }
 
-    pub fn writer(bs: *BinaryStream, stdio: std.Io) Writer {
+    pub fn writer(bs: *BinaryStream, stdio: std.Io, buffer: []u8) Writer {
         return .{
             .interface = .{
                 .vtable = &.{
                     .drain = Writer.drain,
                 },
-                .buffer = &.{},
+                .buffer = buffer,
             },
             .stream = bs,
             .stdio = stdio,

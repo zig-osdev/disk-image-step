@@ -20,7 +20,7 @@ pub fn parse(ctx: dim.Context, stdio: std.Io) !dim.Content {
 }
 
 fn render(self: *FillData, io: std.Io,  stream: *dim.BinaryStream) dim.Content.RenderError!void {
-    var writer = stream.writer(io);
+    var writer = stream.writer(io, &.{});
     writer.interface.splatByteAll(
         self.fill_value,
         stream.length,
