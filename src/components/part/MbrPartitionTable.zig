@@ -13,7 +13,7 @@ bootloader: ?dim.Content,
 disk_id: ?u32,
 partitions: [4]?Partition,
 
-pub fn parse(ctx: dim.Context) !dim.Content {
+pub fn parse(ctx: dim.Context, stdio: std.Io) !dim.Content {
     const pf = try ctx.alloc_object(PartTable);
     pf.* = .{
         .bootloader = null,
@@ -29,14 +29,14 @@ pub fn parse(ctx: dim.Context) !dim.Content {
     var next_part_id: usize = 0;
     var last_part_id: ?usize = null;
     while (next_part_id < pf.partitions.len) {
-        const kw = try ctx.parse_enum(enum {
+        const kw = try ctx.parse_enum(stdio, enum {
             bootloader,
             part,
             ignore,
         });
         switch (kw) {
             .bootloader => {
-                const bootloader_content = try ctx.parse_content();
+                const bootloader_content = try ctx.parse_content(stdio);
                 if (pf.bootloader != null) {
                     try ctx.report_nonfatal_error("mbr-part.bootloader specified twice!", .{});
                 }
@@ -47,7 +47,7 @@ pub fn parse(ctx: dim.Context) !dim.Content {
                 next_part_id += 1;
             },
             .part => {
-                pf.partitions[next_part_id] = try parse_partition(ctx);
+                pf.partitions[next_part_id] = try parse_partition(ctx, stdio);
                 last_part_id = next_part_id;
                 next_part_id += 1;
             },
@@ -83,7 +83,7 @@ pub fn parse(ctx: dim.Context) !dim.Content {
     }));
 }
 
-fn parse_partition(ctx: dim.Context) !Partition {
+fn parse_partition(ctx: dim.Context, stdio: std.Io) !Partition {
     var part: Partition = .{
         .offset = null,
         .size = null,
@@ -99,7 +99,7 @@ fn parse_partition(ctx: dim.Context) !Partition {
     }) = .init(ctx, &part);
 
     parse_loop: while (true) {
-        const kw = try ctx.parse_enum(enum {
+        const kw = try ctx.parse_enum(stdio, enum {
             type,
             bootable,
             size,
@@ -109,7 +109,7 @@ fn parse_partition(ctx: dim.Context) !Partition {
         });
         try switch (kw) {
             .type => {
-                const part_name = try ctx.parse_string();
+                const part_name = try ctx.parse_string(stdio);
 
                 const encoded = if (std.fmt.parseInt(u8, part_name, 0)) |value|
                     value
@@ -125,9 +125,9 @@ fn parse_partition(ctx: dim.Context) !Partition {
                 try updater.set(.type, encoded);
             },
             .bootable => updater.set(.bootable, true),
-            .size => updater.set(.size, try ctx.parse_mem_size()),
-            .offset => updater.set(.offset, try ctx.parse_mem_size()),
-            .contains => updater.set(.contains, try ctx.parse_content()),
+            .size => updater.set(.size, try ctx.parse_mem_size(stdio)),
+            .offset => updater.set(.offset, try ctx.parse_mem_size(stdio)),
+            .contains => updater.set(.contains, try ctx.parse_content(stdio)),
             .endpart => break :parse_loop,
         };
     }
@@ -137,7 +137,7 @@ fn parse_partition(ctx: dim.Context) !Partition {
     return part;
 }
 
-pub fn render(table: *PartTable, stream: *dim.BinaryStream) dim.Content.RenderError!void {
+pub fn render(table: *PartTable, io: std.Io, stream: *dim.BinaryStream) dim.Content.RenderError!void {
     const last_part_id = blk: {
         var last: usize = 0;
         for (table.partitions, 0..) |p, i| {
@@ -161,7 +161,7 @@ pub fn render(table: *PartTable, stream: *dim.BinaryStream) dim.Content.RenderEr
         if (table.bootloader) |bootloader| {
             var sector: dim.BinaryStream = .init_buffer(&boot_sector);
 
-            try bootloader.render(&sector);
+            try bootloader.render(io, &sector);
 
             const upper_limit: u64 = if (table.disk_id != null)
                 0x01B8
@@ -238,7 +238,7 @@ pub fn render(table: *PartTable, stream: *dim.BinaryStream) dim.Content.RenderEr
         boot_sector[0x01FE] = 0x55;
         boot_sector[0x01FF] = 0xAA;
 
-        try stream.write(0, &boot_sector);
+        try stream.write(io,0, &boot_sector);
     }
 
     for (part_infos, table.partitions) |maybe_info, maybe_part| {
@@ -247,7 +247,7 @@ pub fn render(table: *PartTable, stream: *dim.BinaryStream) dim.Content.RenderEr
 
         var sub_view = try stream.slice(info.offset, info.size);
 
-        try part.contains.render(&sub_view);
+        try part.contains.render(io, &sub_view);
     }
 }
 

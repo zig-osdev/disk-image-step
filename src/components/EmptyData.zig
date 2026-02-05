@@ -8,14 +8,16 @@ const dim = @import("../dim.zig");
 
 const EmptyData = @This();
 
-pub fn parse(ctx: dim.Context) !dim.Content {
+pub fn parse(ctx: dim.Context, stdio: std.Io) !dim.Content {
     _ = ctx;
+    _ = stdio;
     return .create_handle(undefined, .create(@This(), .{
         .render_fn = render,
     }));
 }
 
-fn render(self: *EmptyData, stream: *dim.BinaryStream) dim.Content.RenderError!void {
+fn render(self: *EmptyData, io: std.Io, stream: *dim.BinaryStream) dim.Content.RenderError!void {
     _ = self;
     _ = stream;
+    _ = io;
 }

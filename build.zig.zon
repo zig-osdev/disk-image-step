@@ -4,12 +4,12 @@
     .fingerprint = 0x9947018c924eecb2,
     .dependencies = .{
         .zfat = .{
-            .url = "git+https://github.com/ZigEmbeddedGroup/zfat.git#0571b0d8c8cc4fcb037a1d5e7ea5666cb2f83ddf",
-            .hash = "zfat-0.15.0-SNNK9RRqcgCLQ5mjXghbB6mokzcHORsGnY7GtbfOt2k3",
+            .url = "git+https://github.com/khitiara/zfat?ref=0.15#4ce2a6a95d4410573dcc1c159085f554465aea04",
+            .hash = "zfat-0.15.0-SNNK9QCZcgBdWwpwf_lzSuKP12w2HZQnIQwT4qn8TfZi",
         },
         .args = .{
-            .url = "git+https://github.com/ikskuh/zig-args.git#8ae26b44a884ff20dca98ee84c098e8f8e94902f",
-            .hash = "args-0.0.0-CiLiqojRAACGzDRO7A9dw7kWSchNk29caJZkXuMCb0Cn",
+            .url = "git+https://github.com/khitiara/zig-args#4085c9be55dfd2eeb6893694510a2ce97e89f9fe",
+            .hash = "args-0.0.0-CiLiqiLSAAArS0NVwnYLAarU-u1csj8zAkg5-q4pa1n8",
         },
     },
     .paths = .{

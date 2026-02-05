@@ -18,8 +18,8 @@ ops: std.array_list.Managed(common.FsOperation),
 sector_align: ?c_uint = null,
 cluster_size: ?u32 = null,
 
-pub fn parse(ctx: dim.Context) !dim.Content {
-    const fat_type = try ctx.parse_enum(FatType);
+pub fn parse(ctx: dim.Context, stdio: std.Io) !dim.Content {
+    const fat_type = try ctx.parse_enum(stdio,FatType);
 
     const pf = try ctx.alloc_object(FAT);
     pf.* = .{
@@ -32,7 +32,7 @@ pub fn parse(ctx: dim.Context) !dim.Content {
         .updater = .init(ctx, pf),
     };
 
-    try common.parse_ops(ctx, "endfat", &appender);
+    try common.parse_ops(ctx, stdio, "endfat", &appender);
 
     try appender.updater.validate();
 
@@ -59,7 +59,7 @@ const Appender = struct {
         try self.fat.ops.append(op);
     }
 
-    pub fn parse_custom_op(self: *@This(), ctx: dim.Context, str_op: []const u8) !void {
+    pub fn parse_custom_op(self: *@This(), stdio: std.Io, ctx: dim.Context, str_op: []const u8) !void {
         const Op = enum {
             label,
             fats,
@@ -72,16 +72,17 @@ const Appender = struct {
             .{str_op},
         );
         switch (op) {
-            .label => try self.updater.set(.label, try ctx.parse_string()),
-            .fats => try self.updater.set(.fats, try ctx.parse_enum(fatfs.FatTables)),
-            .@"root-size" => try self.updater.set(.rootdir_size, try ctx.parse_integer(c_uint, 0)),
-            .@"sector-align" => try self.updater.set(.sector_align, try ctx.parse_integer(c_uint, 0)),
-            .@"cluster-size" => try self.updater.set(.cluster_size, try ctx.parse_integer(u32, 0)),
+            .label => try self.updater.set(.label, try ctx.parse_string(stdio)),
+            .fats => try self.updater.set(.fats, try ctx.parse_enum(stdio, fatfs.FatTables)),
+            .@"root-size" => try self.updater.set(.rootdir_size, try ctx.parse_integer(stdio,c_uint, 0)),
+            .@"sector-align" => try self.updater.set(.sector_align, try ctx.parse_integer(stdio, c_uint, 0)),
+            .@"cluster-size" => try self.updater.set(.cluster_size, try ctx.parse_integer(stdio, u32, 0)),
         }
     }
 };
 
-fn render(self: *FAT, stream: *dim.BinaryStream) dim.Content.RenderError!void {
+fn render(self: *FAT, io: std.Io, stream: *dim.BinaryStream) dim.Content.RenderError!void {
+    fatfs.io = io;
     var bsd: BinaryStreamDisk = .{ .stream = stream };
 
     const min_size, const max_size = self.format_as.get_size_limits();
@@ -154,7 +155,7 @@ fn render(self: *FAT, stream: *dim.BinaryStream) dim.Content.RenderError!void {
 
     const wrapper = AtomicOps{};
     for (self.ops.items) |op| {
-        try op.execute(wrapper);
+        try op.execute(io, wrapper);
     }
 }
 
@@ -241,7 +242,7 @@ const AtomicOps = struct {
         defer fs_file.close();
 
         var fs_file_buffer: [1024]u8 = undefined;
-        var adapter = fs_file.writer(&fs_file_buffer);
+        var adapter = fs_file.writer( &fs_file_buffer);
 
         _ = try reader.streamRemaining(&adapter.writer);
 
@@ -273,25 +274,26 @@ const BinaryStreamDisk = struct {
         return disk_getStatus(intf);
     }
 
-    fn disk_read(intf: *fatfs.Disk, buff: [*]u8, sector: fatfs.LBA, count: c_uint) fatfs.Disk.Error!void {
+    fn disk_read(intf: *fatfs.Disk, io: std.Io, buff: [*]u8, sector: fatfs.LBA, count: c_uint) fatfs.Disk.Error!void {
         const bsd: *BinaryStreamDisk = @fieldParentPtr("disk", intf);
 
-        bsd.stream.read(block_size * sector, buff[0 .. count * block_size]) catch |err| {
+        bsd.stream.read(io, block_size * sector, buff[0 .. count * block_size]) catch |err| {
             bsd.disk_error = err;
             return error.IoError;
         };
     }
 
-    fn disk_write(intf: *fatfs.Disk, buff: [*]const u8, sector: fatfs.LBA, count: c_uint) fatfs.Disk.Error!void {
+    fn disk_write(intf: *fatfs.Disk, io: std.Io, buff: [*]const u8, sector: fatfs.LBA, count: c_uint) fatfs.Disk.Error!void {
         const bsd: *BinaryStreamDisk = @fieldParentPtr("disk", intf);
 
-        bsd.stream.write(block_size * sector, buff[0 .. count * block_size]) catch |err| {
+        bsd.stream.write(io, block_size * sector, buff[0 .. count * block_size]) catch |err| {
             bsd.disk_error = err;
             return error.IoError;
         };
     }
 
-    fn disk_ioctl(intf: *fatfs.Disk, cmd: fatfs.IoCtl, buff: [*]u8) fatfs.Disk.Error!void {
+    fn disk_ioctl(intf: *fatfs.Disk, io: std.Io, cmd: fatfs.IoCtl, buff: [*]u8) fatfs.Disk.Error!void {
+        _ = io;
         const bsd: *BinaryStreamDisk = @fieldParentPtr("disk", intf);
 
         switch (cmd) {
