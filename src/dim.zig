@@ -128,11 +128,14 @@ pub fn main(init: std.process.Init) !u8 {
         global_deps_file_writer = global_deps_file.?.writer(io_iface, global_deps_buffer);
         global_deps_writer = &global_deps_file_writer.interface;
 
+        const script_realpath = current_dir.realPathFileAlloc(io_iface, script_path, gpa) catch |e| std.debug.panic("failed to determine real path for dependency file: {s}", .{@errorName(e)});
+        defer gpa.free(script_realpath);
+
         try global_deps_writer.print(
             \\{s}: {s}
         , .{
             output_path,
-            script_path,
+            script_realpath,
         });
     }
     defer if (global_deps_file) |deps_file| {
@@ -641,7 +644,7 @@ pub const FileName = struct {
         var file_reader = handle.file.reader(io, &.{});
 
         var buffer: [8192]u8 = undefined;
-        var writer = stream.writer(io,&buffer);
+        var writer = stream.writer(io, &buffer);
 
         _ = try file_reader.interface.streamRemaining(&writer.interface);
     }
@@ -738,7 +741,7 @@ pub const BinaryStream = struct {
         switch (bs.backing) {
             .buffer => |ptr| @memcpy(ptr[@intCast(offset)..][0..data.len], data),
             .file => |state| {
-                state.file.writePositionalAll(io,data, state.base + offset) catch return error.IoError;
+                state.file.writePositionalAll(io, data, state.base + offset) catch return error.IoError;
             },
         }
     }
