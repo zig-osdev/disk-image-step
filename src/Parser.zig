@@ -18,18 +18,19 @@ pub const Error = Tokenizer.Error || error{
     UnknownDirective,
     OutOfMemory,
     InvalidEscapeSequence,
+    Canceled,
 };
 
 pub const IO = struct {
-    fetch_file_fn: *const fn (io: *const IO, std.mem.Allocator, path: []const u8) error{ FileNotFound, IoError, OutOfMemory, InvalidPath }![]const u8,
-    resolve_variable_fn: *const fn (io: *const IO, name: []const u8) error{UnknownVariable}![]const u8,
+    fetch_file_fn: *const fn (stdio: std.Io, io: *const IO, std.mem.Allocator, path: []const u8) error{ FileNotFound, IoError, OutOfMemory, InvalidPath, Canceled }![]const u8,
+    resolve_variable_fn: *const fn (stdio: std.Io, io: *const IO, name: []const u8) error{UnknownVariable}![]const u8,
 
-    pub fn fetch_file(io: *const IO, allocator: std.mem.Allocator, path: []const u8) error{ FileNotFound, IoError, OutOfMemory, InvalidPath }![]const u8 {
-        return io.fetch_file_fn(io, allocator, path);
+    pub fn fetch_file(io: *const IO, stdio: std.Io, allocator: std.mem.Allocator, path: []const u8) error{ FileNotFound, IoError, OutOfMemory, InvalidPath, Canceled }![]const u8 {
+        return io.fetch_file_fn(stdio,io, allocator, path);
     }
 
-    pub fn resolve_variable(io: *const IO, name: []const u8) error{UnknownVariable}![]const u8 {
-        return io.resolve_variable_fn(io, name);
+    pub fn resolve_variable(io: *const IO, stdio: std.Io, name: []const u8) error{UnknownVariable}![]const u8 {
+        return io.resolve_variable_fn(stdio,io, name);
     }
 };
 
@@ -84,10 +85,10 @@ pub fn push_source(parser: *Parser, options: struct {
     };
 }
 
-pub fn push_file(parser: *Parser, include_path: []const u8) !void {
+pub fn push_file(parser: *Parser, stdio: std.Io, include_path: []const u8) !void {
     const abs_include_path = try parser.get_include_path(parser.arena.allocator(), include_path);
 
-    const file_contents = try parser.io.fetch_file(parser.arena.allocator(), abs_include_path);
+    const file_contents = try parser.io.fetch_file(stdio , parser.arena.allocator(), abs_include_path);
 
     const index = parser.file_stack.len;
     parser.file_stack.len += 1;
@@ -120,14 +121,14 @@ pub fn get_include_path(parser: Parser, allocator: std.mem.Allocator, rel_includ
     return abs_include_path;
 }
 
-pub fn next(parser: *Parser) (Error || error{UnexpectedEndOfFile})![]const u8 {
-    return if (try parser.next_or_eof()) |word|
+pub fn next(parser: *Parser, stdio: std.Io) (Error || error{UnexpectedEndOfFile})![]const u8 {
+    return if (try parser.next_or_eof(stdio)) |word|
         word
     else
         error.UnexpectedEndOfFile;
 }
 
-pub fn next_or_eof(parser: *Parser) Error!?[]const u8 {
+pub fn next_or_eof(parser: *Parser, stdio: std.Io) Error!?[]const u8 {
     fetch_loop: while (parser.file_stack.len > 0) {
         const top = &parser.file_stack[parser.file_stack.len - 1];
 
@@ -141,7 +142,7 @@ pub fn next_or_eof(parser: *Parser) Error!?[]const u8 {
         switch (token.type) {
             .whitespace, .comment => unreachable,
 
-            .word, .variable, .string => return try parser.resolve_value(
+            .word, .variable, .string => return try parser.resolve_value(stdio,
                 token.type,
                 top.tokenizer.get_text(token),
             ),
@@ -152,14 +153,14 @@ pub fn next_or_eof(parser: *Parser) Error!?[]const u8 {
                 if (std.mem.eql(u8, directive, "!include")) {
                     if (try fetch_token(&top.tokenizer)) |path_token| {
                         const rel_include_path = switch (path_token.type) {
-                            .word, .variable, .string => try parser.resolve_value(
+                            .word, .variable, .string => try parser.resolve_value(stdio,
                                 path_token.type,
                                 top.tokenizer.get_text(path_token),
                             ),
                             .comment, .directive, .whitespace => return error.BadDirective,
                         };
 
-                        try parser.push_file(rel_include_path);
+                        try parser.push_file(stdio, rel_include_path);
                     } else {
                         return error.ExpectedIncludePath;
                     }
@@ -189,11 +190,11 @@ fn fetch_token(tok: *Tokenizer) Tokenizer.Error!?Token {
     }
 }
 
-fn resolve_value(parser: *Parser, token_type: TokenType, text: []const u8) ![]const u8 {
+fn resolve_value(parser: *Parser, stdio: std.Io, token_type: TokenType, text: []const u8) ![]const u8 {
     return switch (token_type) {
         .word => text,
 
-        .variable => try parser.io.resolve_variable(
+        .variable => try parser.io.resolve_variable(stdio,
             text[1..],
         ),
 
@@ -208,10 +209,12 @@ fn resolve_value(parser: *Parser, token_type: TokenType, text: []const u8) ![]co
             if (!has_includes)
                 return content_slice;
 
-            var unescaped: std.array_list.Managed(u8) = .init(parser.arena.allocator());
-            defer unescaped.deinit();
+            const allocator = parser.arena.allocator();
 
-            try unescaped.ensureTotalCapacityPrecise(content_slice.len);
+            var unescaped = std.ArrayList(u8).empty;
+            defer unescaped.deinit(allocator);
+
+            try unescaped.ensureTotalCapacityPrecise(allocator, content_slice.len);
 
             {
                 var i: usize = 0;
@@ -220,7 +223,7 @@ fn resolve_value(parser: *Parser, token_type: TokenType, text: []const u8) ![]co
                     i += 1;
 
                     if (c != '\\') {
-                        try unescaped.append(c);
+                        try unescaped.append(allocator, c);
                         continue;
                     }
 
@@ -233,20 +236,20 @@ fn resolve_value(parser: *Parser, token_type: TokenType, text: []const u8) ![]co
                     errdefer std.log.err("invalid escape sequence: \\{s}", .{[_]u8{esc_code}});
 
                     switch (esc_code) {
-                        'r' => try unescaped.append('\r'),
-                        'n' => try unescaped.append('\n'),
-                        't' => try unescaped.append('\t'),
-                        '\\' => try unescaped.append('\\'),
-                        '\"' => try unescaped.append('\"'),
-                        '\'' => try unescaped.append('\''),
-                        'e' => try unescaped.append('\x1B'),
+                        'r' => try unescaped.append(allocator, '\r'),
+                        'n' => try unescaped.append(allocator, '\n'),
+                        't' => try unescaped.append(allocator, '\t'),
+                        '\\' => try unescaped.append(allocator, '\\'),
+                        '\"' => try unescaped.append(allocator, '\"'),
+                        '\'' => try unescaped.append(allocator, '\''),
+                        'e' => try unescaped.append(allocator, '\x1B'),
 
                         else => return error.InvalidEscapeSequence,
                     }
                 }
             }
 
-            return try unescaped.toOwnedSlice();
+            return try unescaped.toOwnedSlice(allocator);
         },
 
         .comment, .directive, .whitespace => unreachable,

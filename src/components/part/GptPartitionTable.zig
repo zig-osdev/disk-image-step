@@ -10,7 +10,7 @@ disk_id: ?Guid,
 legacy_bootable: bool = false,
 partitions: []Partition,
 
-pub fn parse(ctx: dim.Context) !dim.Content {
+pub fn parse(ctx: dim.Context, stdio: std.Io) !dim.Content {
     const pt = try ctx.alloc_object(PartTable);
     pt.* = .{
         .disk_id = null,
@@ -19,7 +19,7 @@ pub fn parse(ctx: dim.Context) !dim.Content {
 
     var partitions: std.ArrayList(Partition) = .empty;
     loop: while (true) {
-        const kw = try ctx.parse_enum(enum {
+        const kw = try ctx.parse_enum(stdio, enum {
             guid,
             part,
             endgpt,
@@ -27,14 +27,14 @@ pub fn parse(ctx: dim.Context) !dim.Content {
         });
         switch (kw) {
             .guid => {
-                const guid_str = try ctx.parse_string();
+                const guid_str = try ctx.parse_string(stdio);
                 if (guid_str.len != 36)
                     return ctx.report_fatal_error("Invalid disk GUID: wrong length", .{});
 
                 pt.disk_id = Guid.parse(guid_str[0..36].*) catch |err|
                     return ctx.report_fatal_error("Invalid disk GUID: {}", .{err});
             },
-            .part => (try partitions.addOne(ctx.get_arena())).* = try parsePartition(ctx),
+            .part => (try partitions.addOne(ctx.get_arena())).* = try parsePartition(ctx, stdio),
             .@"legacy-bootable" => pt.legacy_bootable = true,
             .endgpt => break :loop,
         }
@@ -74,7 +74,7 @@ pub fn parse(ctx: dim.Context) !dim.Content {
     }));
 }
 
-fn parsePartition(ctx: dim.Context) !Partition {
+fn parsePartition(ctx: dim.Context, stdio: std.Io) !Partition {
     var part: Partition = .{
         .type = undefined,
         .part_id = null,
@@ -98,7 +98,7 @@ fn parsePartition(ctx: dim.Context) !Partition {
     }) = .init(ctx, &part);
 
     parse_loop: while (true) {
-        const kw = try ctx.parse_enum(enum {
+        const kw = try ctx.parse_enum(stdio, enum {
             type,
             name,
             guid,
@@ -109,7 +109,7 @@ fn parsePartition(ctx: dim.Context) !Partition {
         });
         switch (kw) {
             .type => {
-                const type_name = try ctx.parse_string();
+                const type_name = try ctx.parse_string(stdio);
 
                 const type_guid = known_types.get(type_name) orelse blk: {
                     if (type_name.len == 36) if (Guid.parse(type_name[0..36].*)) |guid| break :blk guid else |_| {};
@@ -122,13 +122,13 @@ fn parsePartition(ctx: dim.Context) !Partition {
                 try updater.set(.type, type_guid);
             },
             .name => {
-                const string = try ctx.parse_string();
+                const string = try ctx.parse_string(stdio);
                 const name = stringToName(string) catch return error.BadStringLiteral;
 
                 try updater.set(.name, name);
             },
             .guid => {
-                const string = try ctx.parse_string();
+                const string = try ctx.parse_string(stdio);
                 if (string.len != 36)
                     return ctx.report_fatal_error("Invalid partition GUID: wrong length", .{});
 
@@ -136,9 +136,9 @@ fn parsePartition(ctx: dim.Context) !Partition {
                     return ctx.report_fatal_error("Invalid partition GUID: {}", .{err});
                 });
             },
-            .size => try updater.set(.size, try ctx.parse_mem_size()),
-            .offset => try updater.set(.offset, try ctx.parse_mem_size()),
-            .contains => try updater.set(.contains, try ctx.parse_content()),
+            .size => try updater.set(.size, try ctx.parse_mem_size(stdio)),
+            .offset => try updater.set(.offset, try ctx.parse_mem_size(stdio)),
+            .contains => try updater.set(.contains, try ctx.parse_content(stdio)),
             .endpart => break :parse_loop,
         }
     }
@@ -148,8 +148,9 @@ fn parsePartition(ctx: dim.Context) !Partition {
     return part;
 }
 
-pub fn render(table: *PartTable, stream: *dim.BinaryStream) dim.Content.RenderError!void {
-    const random = std.crypto.random;
+pub fn render(table: *PartTable, io: std.Io, stream: *dim.BinaryStream) dim.Content.RenderError!void {
+    var r: std.Random.IoSource = .{ .io = io };
+    const random = r.interface();
 
     const lba_len = stream.length / block_size;
     const secondary_pth_lba = lba_len - 1;
@@ -207,11 +208,11 @@ pub fn render(table: *PartTable, stream: *dim.BinaryStream) dim.Content.RenderEr
         pe_block[0x38..].* = @bitCast(partition.name);
 
         pe_crc.update(&pe_block);
-        try stream.write(block_size * 2 + pe_ofs, &pe_block);
-        try stream.write(block_size * secondary_pe_array_lba + pe_ofs, &pe_block);
+        try stream.write(io, block_size * 2 + pe_ofs, &pe_block);
+        try stream.write(io, block_size * secondary_pe_array_lba + pe_ofs, &pe_block);
 
         var sub_view = try stream.slice(offset, size);
-        try partition.contains.render(&sub_view);
+        try partition.contains.render(io, &sub_view);
 
         pe_ofs += 0x80;
     }
@@ -220,8 +221,8 @@ pub fn render(table: *PartTable, stream: *dim.BinaryStream) dim.Content.RenderEr
         @memset(&pe_block, 0);
         for (table.partitions.len..0x80) |_| {
             pe_crc.update(&pe_block);
-            try stream.write(block_size * 2 + pe_ofs, &pe_block);
-            try stream.write(block_size * secondary_pe_array_lba + pe_ofs, &pe_block);
+            try stream.write(io, block_size * 2 + pe_ofs, &pe_block);
+            try stream.write(io, block_size * secondary_pe_array_lba + pe_ofs, &pe_block);
             pe_ofs += 0x80;
         }
     }
@@ -273,9 +274,9 @@ pub fn render(table: *PartTable, stream: *dim.BinaryStream) dim.Content.RenderEr
     std.mem.writeInt(u32, backup_gpt_header[0x10..0x14], backup_gpt_header_crc32, .little); // CRC32 of backup header
 
     // write everything we generated to disk
-    try mbr.render(stream);
-    try stream.write(block_size, &gpt_header_block);
-    try stream.write(block_size * secondary_pth_lba, &backup_gpt_header_block);
+    try mbr.render(io, stream);
+    try stream.write(io, block_size, &gpt_header_block);
+    try stream.write(io, block_size * secondary_pth_lba, &backup_gpt_header_block);
 }
 
 pub const Guid = extern struct {
