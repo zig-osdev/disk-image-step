@@ -534,7 +534,6 @@ pub const FileName = struct {
             error.WouldBlock,
             error.NoDevice,
             error.Unexpected,
-            error.SharingViolation,
             error.PathAlreadyExists,
             error.PipeBusy,
             error.NetworkNotFound,
