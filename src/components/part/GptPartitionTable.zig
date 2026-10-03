@@ -171,7 +171,7 @@ pub fn render(table: *PartTable, stream: *dim.BinaryStream) dim.Content.RenderEr
     for (table.partitions[0..], 0..) |partition, i| {
         @memset(&pe_block, 0);
 
-        const offset = partition.offset orelse 33 * block_size;
+        const offset = partition.offset orelse 34 * block_size;
         const size = partition.size orelse if (i == table.partitions.len - 1)
             ((max_partition_lba + 1) * block_size) - offset
         else
