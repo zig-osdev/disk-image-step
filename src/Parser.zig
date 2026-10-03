@@ -297,10 +297,10 @@ test Parser {
     };
 
     for (sequence) |item| {
-        try std.testing.expectEqualStrings(item, (try parser.next_or_eof(std.testing.io)).?);
+        try std.testing.expectEqualStrings(item, (try parser.next_or_eof()).?);
     }
 
-    try std.testing.expectEqual(null, parser.next_or_eof(std.testing.io));
+    try std.testing.expectEqual(null, parser.next_or_eof());
 }
 
 test "parser with variables" {
@@ -342,10 +342,10 @@ test "parser with variables" {
     };
 
     for (sequence) |item| {
-        try std.testing.expectEqualStrings(item, (try parser.next_or_eof(std.testing.io)).?);
+        try std.testing.expectEqualStrings(item, (try parser.next_or_eof()).?);
     }
 
-    try std.testing.expectEqual(null, parser.next_or_eof(std.testing.io));
+    try std.testing.expectEqual(null, parser.next_or_eof());
 }
 
 test "parser with variables and include files" {
@@ -395,10 +395,10 @@ test "parser with variables and include files" {
     };
 
     for (sequence) |item| {
-        try std.testing.expectEqualStrings(item, (try parser.next_or_eof(std.testing.io)).?);
+        try std.testing.expectEqualStrings(item, (try parser.next_or_eof()).?);
     }
 
-    try std.testing.expectEqual(null, parser.next_or_eof(std.testing.io));
+    try std.testing.expectEqual(null, parser.next_or_eof());
 }
 
 test "parse nothing" {
@@ -412,7 +412,7 @@ test "parse nothing" {
     });
     defer parser.deinit();
 
-    try std.testing.expectEqual(null, parser.next_or_eof(std.testing.io));
+    try std.testing.expectEqual(null, parser.next_or_eof());
 }
 
 // fn fuzz_parser(_: void, input: []const u8) !void {
