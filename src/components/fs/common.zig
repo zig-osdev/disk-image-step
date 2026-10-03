@@ -24,6 +24,7 @@ pub const FsOperation = union(enum) {
         path: [:0]const u8,
         size: u64,
         contents: dim.Content,
+        ctx: dim.Context,
     },
 
     pub fn execute(op: FsOperation, executor: anytype) !void {
@@ -65,7 +66,7 @@ fn Executor(comptime T: type) type {
                         error.FileNotFound => return, // open() already reported the error
                         else => |e| return e,
                     };
-                    defer iter_dir.close();
+                    defer iter_dir.close(data.source.env.stdio);
 
                     var walker_memory: [16384]u8 = undefined;
                     var temp_allocator: std.heap.FixedBufferAllocator = .init(&walker_memory);
@@ -75,7 +76,7 @@ fn Executor(comptime T: type) type {
                     var walker = try iter_dir.walk(temp_allocator.allocator());
                     defer walker.deinit();
 
-                    while (walker.next() catch |err| return walk_err(err)) |entry| {
+                    while (walker.next(data.source.env.stdio) catch |err| return walk_err(err)) |entry| {
                         const path = std.fmt.bufPrintZ(&path_memory, "{s}/{s}", .{
                             data.path,
                             entry.path,
@@ -106,8 +107,8 @@ fn Executor(comptime T: type) type {
 
                             else => {
                                 var realpath_buffer: [std.fs.max_path_bytes]u8 = undefined;
-                                std.log.warn("cannot copy file {!s}: {s} is not a supported file type!", .{
-                                    entry.dir.realpath(entry.path, &realpath_buffer),
+                                std.log.warn("cannot copy file {s}: {s} is not a supported file type!", .{
+                                    if (entry.dir.realPathFile(data.source.env.stdio, entry.path, &realpath_buffer)) |l| realpath_buffer[0..l] else |_| entry.path,
                                     @tagName(entry.kind),
                                 });
                             },
@@ -119,7 +120,7 @@ fn Executor(comptime T: type) type {
                     const buffer = try std.heap.page_allocator.alloc(u8, data.size);
                     defer std.heap.page_allocator.free(buffer);
 
-                    var bs: dim.BinaryStream = .init_buffer(buffer);
+                    var bs: dim.BinaryStream = .init_buffer(data.ctx.env.stdio, buffer);
 
                     try data.contents.render(&bs);
 
@@ -157,27 +158,25 @@ fn Executor(comptime T: type) type {
             try exec.inner.mkdir(path);
         }
 
-        fn walk_err(err: (std.fs.Dir.OpenError || std.mem.Allocator.Error)) dim.Content.RenderError {
+        fn walk_err(err: (std.Io.Dir.OpenError || std.mem.Allocator.Error)) dim.Content.RenderError {
             return switch (err) {
-                error.InvalidUtf8 => error.InvalidPath,
-                error.InvalidWtf8 => error.InvalidPath,
-                error.BadPathName => error.InvalidPath,
-                error.NameTooLong => error.InvalidPath,
+                error.BadPathName, error.NameTooLong => error.InvalidPath,
 
                 error.OutOfMemory => error.OutOfMemory,
                 error.FileNotFound => error.FileNotFound,
 
-                error.DeviceBusy => error.IoError,
-                error.AccessDenied => error.IoError,
-                error.SystemResources => error.IoError,
-                error.NoDevice => error.IoError,
-                error.Unexpected => error.IoError,
-                error.NetworkNotFound => error.IoError,
-                error.SymLinkLoop => error.IoError,
-                error.ProcessFdQuotaExceeded => error.IoError,
-                error.SystemFdQuotaExceeded => error.IoError,
-                error.NotDir => error.IoError,
-                error.ProcessNotFound,
+                error.Canceled => error.Canceled,
+
+                // error.DeviceBusy,
+                error.AccessDenied,
+                error.SystemResources,
+                error.NoDevice,
+                error.Unexpected,
+                error.NetworkNotFound,
+                error.SymLinkLoop,
+                error.ProcessFdQuotaExceeded,
+                error.SystemFdQuotaExceeded,
+                error.NotDir,
                 error.PermissionDenied,
                 => error.IoError,
             };
@@ -249,7 +248,7 @@ pub fn parse_ops(ctx: dim.Context, end_seq: []const u8, handler: anytype) !void 
             const contents = try ctx.parse_content();
 
             try handler.append_common_op(FsOperation{
-                .create_file = .{ .path = path, .size = size, .contents = contents },
+                .create_file = .{ .path = path, .size = size, .contents = contents, .ctx = ctx },
             });
         } else {
             try handler.parse_custom_op(ctx, opsel);

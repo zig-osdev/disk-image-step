@@ -4,7 +4,8 @@ pub const BuildInterface = @import("src/BuildInterface.zig");
 
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
-    const optimize = b.standardOptimizeOption(.{ .preferred_optimize_mode = .ReleaseSafe });
+    b.release_mode = .fast;
+    const optimize = b.standardOptimizeOption(.{});
 
     const test_step = b.step("test", "Runs the test suite.");
 

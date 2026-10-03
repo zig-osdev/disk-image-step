@@ -159,7 +159,7 @@ pub fn render(table: *PartTable, stream: *dim.BinaryStream) dim.Content.RenderEr
         var boot_sector: [block_size]u8 = @splat(0);
 
         if (table.bootloader) |bootloader| {
-            var sector: dim.BinaryStream = .init_buffer(&boot_sector);
+            var sector: dim.BinaryStream = .init_buffer(stream.stdio, &boot_sector);
 
             try bootloader.render(&sector);
 

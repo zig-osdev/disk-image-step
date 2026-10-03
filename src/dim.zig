@@ -61,18 +61,20 @@ const usage =
 
 const VariableMap = std.StringArrayHashMapUnmanaged([]const u8);
 
-var global_deps_file: ?std.fs.File = null;
+var global_deps_file: ?std.Io.File = null;
 var global_deps_buffer: []u8 = undefined;
-var global_deps_file_writer: std.fs.File.Writer = undefined;
+var global_deps_file_writer: std.Io.File.Writer = undefined;
 var global_deps_writer: *std.Io.Writer = undefined;
 
-pub fn main() !u8 {
+pub fn main(init: std.process.Init) !u8 {
     var gpa_impl: std.heap.DebugAllocator(.{}) = .init;
     defer _ = gpa_impl.deinit();
 
     const gpa = gpa_impl.allocator();
 
-    const opts = try args.parseForCurrentProcess(Options, gpa, .print);
+    const io_iface = init.io;
+
+    const opts = try args.parseForCurrentProcess(Options, init, .print);
     defer opts.deinit();
 
     const options = opts.options;
@@ -83,8 +85,7 @@ pub fn main() !u8 {
     var var_map: VariableMap = .empty;
     defer var_map.deinit(gpa);
 
-    var env_map = try std.process.getEnvMap(gpa);
-    defer env_map.deinit();
+    var env_map = init.environ_map;
 
     if (options.@"import-env") {
         var iter = env_map.iterator();
@@ -114,29 +115,32 @@ pub fn main() !u8 {
         return fatal("--size must be given!");
     }
 
-    var current_dir = try std.fs.cwd().openDir(".", .{});
-    defer current_dir.close();
+    var current_dir = try std.Io.Dir.cwd().openDir(io_iface, ".", .{});
+    defer current_dir.close(io_iface);
 
-    const script_source = try current_dir.readFileAlloc(gpa, script_path, max_script_size);
+    const script_source = try current_dir.readFileAlloc(io_iface, script_path, gpa, .limited(max_script_size));
     defer gpa.free(script_source);
 
     if (options.@"deps-file") |deps_file_path| {
-        global_deps_file = try std.fs.cwd().createFile(deps_file_path, .{});
+        global_deps_file = try std.Io.Dir.cwd().createFile(io_iface, deps_file_path, .{});
         global_deps_buffer = try gpa.alloc(u8, 1024);
 
-        global_deps_file_writer = global_deps_file.?.writer(global_deps_buffer);
+        global_deps_file_writer = global_deps_file.?.writer(io_iface, global_deps_buffer);
         global_deps_writer = &global_deps_file_writer.interface;
+
+        const script_realpath = current_dir.realPathFileAlloc(io_iface, script_path, gpa) catch |e| std.debug.panic("failed to determine real path for dependency file: {s}", .{@errorName(e)});
+        defer gpa.free(script_realpath);
 
         try global_deps_writer.print(
             \\{s}: {s}
         , .{
             output_path,
-            script_path,
+            script_realpath,
         });
     }
     defer if (global_deps_file) |deps_file| {
         global_deps_file_writer.end() catch {};
-        deps_file.close();
+        deps_file.close(io_iface);
         gpa.free(global_deps_buffer);
     };
 
@@ -149,6 +153,7 @@ pub fn main() !u8 {
         .vars = &var_map,
         .include_base = current_dir,
         .parser = undefined,
+        .stdio = io_iface,
     };
 
     var parser = try Parser.init(
@@ -180,12 +185,12 @@ pub fn main() !u8 {
     env.mode = .execute;
 
     {
-        var output_file = try current_dir.createFile(output_path, .{ .read = true });
-        defer output_file.close();
+        var output_file = try current_dir.createFile(io_iface, output_path, .{ .read = true });
+        defer output_file.close(io_iface);
 
-        try output_file.setEndPos(size_limit);
+        try output_file.setLength(io_iface, size_limit);
 
-        var stream: BinaryStream = .init_file(output_file, size_limit);
+        var stream: BinaryStream = .init_file(io_iface, output_file, size_limit);
 
         try root_content.render(&stream);
     }
@@ -201,10 +206,10 @@ pub fn main() !u8 {
     return 0;
 }
 
-pub fn declare_file_dependency(path: []const u8) !void {
+pub fn declare_file_dependency(stdio: std.Io, path: []const u8) !void {
     if (global_deps_file == null) return;
 
-    const stat = std.fs.cwd().statFile(path) catch |err| switch (err) {
+    const stat = std.Io.Dir.cwd().statFile(stdio, path, .{}) catch |err| switch (err) {
         error.IsDir => return,
         else => |e| return e,
     };
@@ -388,9 +393,10 @@ const Environment = struct {
     arena: std.mem.Allocator,
     allocator: std.mem.Allocator,
     parser: *Parser,
-    include_base: std.fs.Dir,
+    include_base: std.Io.Dir,
     vars: *const VariableMap,
     error_flag: bool = false,
+    stdio: std.Io,
     mode: enum { parse, execute } = .parse,
 
     io: Parser.IO = .{
@@ -412,16 +418,16 @@ const Environment = struct {
         }
     }
 
-    fn fetch_file(io: *const Parser.IO, allocator: std.mem.Allocator, path: []const u8) error{ FileNotFound, IoError, OutOfMemory, InvalidPath }![]const u8 {
+    fn fetch_file(io: *const Parser.IO, allocator: std.mem.Allocator, path: []const u8) error{ FileNotFound, IoError, OutOfMemory, InvalidPath, Canceled }![]const u8 {
         const env: *const Environment = @fieldParentPtr("io", io);
 
-        const contents = env.include_base.readFileAlloc(allocator, path, max_script_size) catch |err| switch (err) {
+        const contents = env.include_base.readFileAlloc(env.stdio, path, allocator, .limited(max_script_size)) catch |err| switch (err) {
             error.OutOfMemory => return error.OutOfMemory,
             error.FileNotFound => {
                 const ctx = Context{ .env = @constCast(env) };
                 var buffer: [std.fs.max_path_bytes]u8 = undefined;
                 try ctx.report_nonfatal_error("failed to open file: \"{f}/{f}\"", .{
-                    std.zig.fmtString(env.include_base.realpath(".", &buffer) catch return error.FileNotFound),
+                    std.zig.fmtString(buffer[0 .. env.include_base.realPath(env.stdio, &buffer) catch return error.FileNotFound]),
                     std.zig.fmtString(path),
                 });
                 return error.FileNotFound;
@@ -451,12 +457,11 @@ const Environment = struct {
 ///
 ///
 pub const Content = struct {
-    pub const RenderError = FileName.OpenError || std.Io.Reader.Error || BinaryStream.WriteError || error{
+    pub const RenderError = FileName.OpenError || std.Io.Reader.Error || std.Io.Writer.Error || BinaryStream.WriteError || error{
         ConfigurationError,
         OutOfBounds,
         OutOfMemory,
-        ReadFailed,
-        WriteFailed,
+        Canceled,
     };
     pub const GuessError = FileName.GetSizeError;
 
@@ -500,26 +505,25 @@ pub const Content = struct {
 
 pub const FileName = struct {
     env: *Environment,
-    root_dir: std.fs.Dir,
+    root_dir: std.Io.Dir,
     rel_path: []const u8,
 
-    pub const OpenError = error{ FileNotFound, InvalidPath, IoError };
+    pub const OpenError = error{ FileNotFound, InvalidPath, IoError, Canceled };
 
     pub fn open(name: FileName) OpenError!FileHandle {
-        const file = name.root_dir.openFile(name.rel_path, .{}) catch |err| switch (err) {
+        const file = name.root_dir.openFile(name.env.stdio, name.rel_path, .{}) catch |err| switch (err) {
             error.FileNotFound => {
                 var buffer: [std.fs.max_path_bytes]u8 = undefined;
-                name.env.report_error("failed to open \"{f}/{f}\": not found", .{
-                    std.zig.fmtString(name.root_dir.realpath(".", &buffer) catch |e| @errorName(e)),
-                    std.zig.fmtString(name.rel_path),
+                name.env.report_error("failed to open \"{f}\": not found", .{
+                    std.zig.fmtString(if (name.root_dir.realPath(name.env.stdio, &buffer)) |l| buffer[0..l] else |e| @errorName(e)),
                 }) catch |e| std.debug.assert(e == error.OutOfMemory);
                 return error.FileNotFound;
             },
 
+            error.Canceled => return error.Canceled,
+
             error.NameTooLong,
-            error.InvalidWtf8,
             error.BadPathName,
-            error.InvalidUtf8,
             => return error.InvalidPath,
 
             error.NoSpaceLeft,
@@ -530,7 +534,6 @@ pub const FileName = struct {
             error.WouldBlock,
             error.NoDevice,
             error.Unexpected,
-            error.SharingViolation,
             error.PathAlreadyExists,
             error.PipeBusy,
             error.NetworkNotFound,
@@ -540,36 +543,36 @@ pub const FileName = struct {
             error.SystemFdQuotaExceeded,
             error.IsDir,
             error.NotDir,
-            error.FileLocksNotSupported,
+            error.FileLocksUnsupported,
             error.FileBusy,
-            error.ProcessNotFound,
             error.PermissionDenied,
+            error.ReadOnlyFileSystem,
             => return error.IoError,
         };
 
         try name.declare_dependency();
 
-        return .{ .file = file };
+        return .{ .file = file, .stdio = name.env.stdio };
     }
 
-    pub fn open_dir(name: FileName) OpenError!std.fs.Dir {
-        const dir = name.root_dir.openDir(name.rel_path, .{ .iterate = true }) catch |err| switch (err) {
+    pub fn open_dir(name: FileName) OpenError!std.Io.Dir {
+        const dir = name.root_dir.openDir(name.env.stdio, name.rel_path, .{ .iterate = true }) catch |err| switch (err) {
             error.FileNotFound => {
                 var buffer: [std.fs.max_path_bytes]u8 = undefined;
                 name.env.report_error("failed to open \"{f}/{f}\": not found", .{
-                    std.zig.fmtString(name.root_dir.realpath(".", &buffer) catch |e| @errorName(e)),
+                    std.zig.fmtString(if (name.root_dir.realPath(name.env.stdio, &buffer)) |l| buffer[0..l] else |e| @errorName(e)),
                     std.zig.fmtString(name.rel_path),
                 }) catch |e| std.debug.assert(e == error.OutOfMemory);
                 return error.FileNotFound;
             },
 
+            error.Canceled => return error.Canceled,
+
             error.NameTooLong,
-            error.InvalidWtf8,
             error.BadPathName,
-            error.InvalidUtf8,
             => return error.InvalidPath,
 
-            error.DeviceBusy,
+            // error.DeviceBusy,
             error.AccessDenied,
             error.SystemResources,
             error.NoDevice,
@@ -579,7 +582,6 @@ pub const FileName = struct {
             error.ProcessFdQuotaExceeded,
             error.SystemFdQuotaExceeded,
             error.NotDir,
-            error.ProcessNotFound,
             error.PermissionDenied,
             => return error.IoError,
         };
@@ -592,11 +594,12 @@ pub const FileName = struct {
     pub fn declare_dependency(name: FileName) OpenError!void {
         var buffer: [std.fs.max_path_bytes]u8 = undefined;
 
-        const realpath = name.root_dir.realpath(
+        const realpath = name.root_dir.realPathFile(
+            name.env.stdio,
             name.rel_path,
             &buffer,
         ) catch |e| std.debug.panic("failed to determine real path for dependency file: {s}", .{@errorName(e)});
-        declare_file_dependency(realpath) catch |e| std.debug.panic("Failed to write to deps file: {s}", .{@errorName(e)});
+        declare_file_dependency(name.env.stdio, buffer[0..realpath]) catch |e| std.debug.panic("Failed to write to deps file: {s}", .{@errorName(e)});
     }
 
     pub const GetSizeError = error{ FileNotFound, InvalidPath, IoError };
@@ -605,9 +608,7 @@ pub const FileName = struct {
             error.FileNotFound => return error.FileNotFound,
 
             error.NameTooLong,
-            error.InvalidWtf8,
             error.BadPathName,
-            error.InvalidUtf8,
             => return error.InvalidPath,
 
             error.NoSpaceLeft,
@@ -640,50 +641,53 @@ pub const FileName = struct {
         var handle = try file.open();
         defer handle.close();
 
-        var file_reader = handle.file.reader(&.{});
+        var file_reader = handle.file.reader(handle.stdio, &.{});
 
         var buffer: [8192]u8 = undefined;
-        var writer = stream.writer().adaptToNewApi(&buffer);
+        var writer = stream.writer(&buffer);
 
-        _ = try file_reader.interface.streamRemaining(&writer.new_interface);
+        _ = try file_reader.interface.streamRemaining(&writer.interface);
     }
 };
 
 pub const FileHandle = struct {
-    file: std.fs.File,
+    file: std.Io.File,
+    stdio: std.Io,
 
     pub fn close(fd: *FileHandle) void {
-        fd.file.close();
+        fd.file.close(fd.stdio);
         fd.* = undefined;
     }
 
-    pub fn reader(fd: FileHandle, buffer: []u8) std.fs.File.Reader {
-        return fd.file.reader(buffer);
+    pub fn reader(fd: FileHandle, buffer: []u8) std.Io.File.Reader {
+        return fd.file.reader(fd.stdio, buffer);
     }
 };
 
 pub const BinaryStream = struct {
     pub const WriteError = error{ Overflow, IoError };
-    pub const ReadError = error{ Overflow, IoError };
-    pub const Writer = std.io.GenericWriter(*BinaryStream, WriteError, write_some);
+    pub const WriterError = std.Io.Writer.Error;
+    pub const ReadError = error{ Overflow, IoError, Canceled };
 
     backing: Backing,
+    stdio: std.Io,
 
     virtual_offset: u64 = 0,
 
-    /// Max number of bytes that an be written
+    /// Max number of bytes that can be written
     length: u64,
 
     /// Constructs a BinaryStream from a slice.
-    pub fn init_buffer(data: []u8) BinaryStream {
+    pub fn init_buffer(stdio: std.Io, data: []u8) BinaryStream {
         return .{
             .backing = .{ .buffer = data.ptr },
             .length = data.len,
+            .stdio = stdio,
         };
     }
 
     /// Constructs a BinaryStream from a file.
-    pub fn init_file(file: std.fs.File, max_len: u64) BinaryStream {
+    pub fn init_file(stdio: std.Io, file: std.Io.File, max_len: u64) BinaryStream {
         return .{
             .backing = .{
                 .file = .{
@@ -692,6 +696,7 @@ pub const BinaryStream = struct {
                 },
             },
             .length = max_len,
+            .stdio = stdio,
         };
     }
 
@@ -714,6 +719,7 @@ pub const BinaryStream = struct {
                     },
                 },
             },
+            .stdio = bs.stdio,
         };
     }
 
@@ -725,7 +731,7 @@ pub const BinaryStream = struct {
         switch (bs.backing) {
             .buffer => |ptr| @memcpy(data, ptr[@intCast(offset)..][0..data.len]),
             .file => |state| {
-                const len = state.file.pread(data, state.base + offset) catch return error.IoError;
+                const len = state.file.readPositionalAll(bs.stdio, data, state.base + offset) catch return error.IoError;
                 if (len != data.len)
                     return error.Overflow;
             },
@@ -740,9 +746,7 @@ pub const BinaryStream = struct {
         switch (bs.backing) {
             .buffer => |ptr| @memcpy(ptr[@intCast(offset)..][0..data.len], data),
             .file => |state| {
-                const len = state.file.pwrite(data, state.base + offset) catch return error.IoError;
-                if (len != data.len)
-                    return error.Overflow;
+                state.file.writePositionalAll(bs.stdio, data, state.base + offset) catch return error.IoError;
             },
         }
     }
@@ -753,16 +757,49 @@ pub const BinaryStream = struct {
         bs.virtual_offset = offset;
     }
 
-    pub fn writer(bs: *BinaryStream) Writer {
-        return .{ .context = bs };
+    pub fn writer(bs: *BinaryStream, buffer: []u8) Writer {
+        return .{
+            .interface = .{
+                .vtable = &.{
+                    .drain = Writer.drain,
+                },
+                .buffer = buffer,
+            },
+            .stream = bs,
+        };
     }
 
-    fn write_some(stream: *BinaryStream, data: []const u8) WriteError!usize {
+    pub const Writer = struct {
+        interface: std.Io.Writer,
+        stream: *BinaryStream,
+
+        pub fn drain(io_w: *std.Io.Writer, data: []const []const u8, splat: usize) std.Io.Writer.Error!usize {
+            const w: *Writer = @alignCast(@fieldParentPtr("interface", io_w));
+
+            var written: usize = 0;
+
+            for (data[0 .. data.len - 1]) |bytes| {
+                written += try w.stream.write_some(bytes);
+            }
+
+            const pattern = data[data.len - 1];
+            switch (pattern.len) {
+                0 => {},
+                else => for (0..splat) |_| {
+                    written += try w.stream.write_some(pattern);
+                },
+            }
+
+            return written;
+        }
+    };
+
+    fn write_some(stream: *BinaryStream, data: []const u8) std.Io.Writer.Error!usize {
         const remaining_len = stream.length - stream.virtual_offset;
 
         const written_len: usize = @intCast(@min(remaining_len, data.len));
 
-        try stream.write(stream.virtual_offset, data[0..written_len]);
+        stream.write(stream.virtual_offset, data[0..written_len]) catch return error.WriteFailed;
         stream.virtual_offset += written_len;
 
         return written_len;
@@ -770,7 +807,7 @@ pub const BinaryStream = struct {
 
     pub const Backing = union(enum) {
         file: struct {
-            file: std.fs.File,
+            file: std.Io.File,
             base: u64,
         },
         buffer: [*]u8,
@@ -848,7 +885,7 @@ pub const DiskSize = enum(u64) {
 
         const prefix, const suffix = .{
             divided[0 .. divided.len - 3],
-            std.mem.trimRight(u8, divided[divided.len - 3 ..], "0"),
+            std.mem.trimEnd(u8, divided[divided.len - 3 ..], "0"),
         };
 
         if (suffix.len > 0) {

@@ -21,6 +21,8 @@ cluster_size: ?u32 = null,
 pub fn parse(ctx: dim.Context) !dim.Content {
     const fat_type = try ctx.parse_enum(FatType);
 
+    fatfs.io = ctx.env.stdio;
+
     const pf = try ctx.alloc_object(FAT);
     pf.* = .{
         .format_as = fat_type,
