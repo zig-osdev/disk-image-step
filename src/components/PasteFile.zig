@@ -5,16 +5,16 @@ const PasteFile = @This();
 
 file_handle: dim.FileName,
 
-pub fn parse(ctx: dim.Context, stdio: std.Io) !dim.Content {
+pub fn parse(ctx: dim.Context) !dim.Content {
     const pf = try ctx.alloc_object(PasteFile);
     pf.* = .{
-        .file_handle = try ctx.parse_file_name(stdio),
+        .file_handle = try ctx.parse_file_name(),
     };
     return .create_handle(pf, .create(@This(), .{
         .render_fn = render,
     }));
 }
 
-fn render(self: *PasteFile, io: std.Io, stream: *dim.BinaryStream) dim.Content.RenderError!void {
-    try self.file_handle.copy_to(io, stream);
+fn render(self: *PasteFile, stream: *dim.BinaryStream) dim.Content.RenderError!void {
+    try self.file_handle.copy_to(stream);
 }

@@ -9,18 +9,18 @@ const FillData = @This();
 
 fill_value: u8,
 
-pub fn parse(ctx: dim.Context, stdio: std.Io) !dim.Content {
+pub fn parse(ctx: dim.Context) !dim.Content {
     const pf = try ctx.alloc_object(FillData);
     pf.* = .{
-        .fill_value = try ctx.parse_integer(stdio, u8, 0),
+        .fill_value = try ctx.parse_integer(u8, 0),
     };
     return .create_handle(pf, .create(@This(), .{
         .render_fn = render,
     }));
 }
 
-fn render(self: *FillData, io: std.Io, stream: *dim.BinaryStream) dim.Content.RenderError!void {
-    var writer = stream.writer(io, &.{});
+fn render(self: *FillData, stream: *dim.BinaryStream) dim.Content.RenderError!void {
+    var writer = stream.writer(&.{});
     writer.interface.splatByteAll(
         self.fill_value,
         stream.length,

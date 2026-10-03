@@ -24,11 +24,12 @@ pub const FsOperation = union(enum) {
         path: [:0]const u8,
         size: u64,
         contents: dim.Content,
+        ctx: dim.Context,
     },
 
-    pub fn execute(op: FsOperation, io: std.Io, executor: anytype) !void {
+    pub fn execute(op: FsOperation, executor: anytype) !void {
         const exec: Executor(@TypeOf(executor)) = .init(executor);
-        try exec.execute(io, op);
+        try exec.execute(op);
     }
 };
 
@@ -42,30 +43,30 @@ fn Executor(comptime T: type) type {
             return .{ .inner = wrapped };
         }
 
-        fn execute(exec: Exec, io: std.Io, op: FsOperation) dim.Content.RenderError!void {
+        fn execute(exec: Exec, op: FsOperation) dim.Content.RenderError!void {
             switch (op) {
                 .make_dir => |data| {
                     try exec.recursive_mkdir(data.path);
                 },
 
                 .copy_file => |data| {
-                    var handle = data.source.open(io) catch |err| switch (err) {
+                    var handle = data.source.open() catch |err| switch (err) {
                         error.FileNotFound => return, // open() already reported the error
                         else => |e| return e,
                     };
-                    defer handle.close(io);
+                    defer handle.close();
 
                     var buffer: [1024]u8 = undefined;
-                    var adapter = handle.reader(io, &buffer);
+                    var adapter = handle.reader(&buffer);
 
                     try exec.add_file(data.path, &adapter.interface);
                 },
                 .copy_dir => |data| {
-                    var iter_dir = data.source.open_dir(io) catch |err| switch (err) {
+                    var iter_dir = data.source.open_dir() catch |err| switch (err) {
                         error.FileNotFound => return, // open() already reported the error
                         else => |e| return e,
                     };
-                    defer iter_dir.close(io);
+                    defer iter_dir.close(data.source.env.stdio);
 
                     var walker_memory: [16384]u8 = undefined;
                     var temp_allocator: std.heap.FixedBufferAllocator = .init(&walker_memory);
@@ -75,7 +76,7 @@ fn Executor(comptime T: type) type {
                     var walker = try iter_dir.walk(temp_allocator.allocator());
                     defer walker.deinit();
 
-                    while (walker.next(io) catch |err| return walk_err(err)) |entry| {
+                    while (walker.next(data.source.env.stdio) catch |err| return walk_err(err)) |entry| {
                         const path = std.fmt.bufPrintZ(&path_memory, "{s}/{s}", .{
                             data.path,
                             entry.path,
@@ -91,11 +92,11 @@ fn Executor(comptime T: type) type {
                                     .rel_path = entry.basename,
                                 };
 
-                                var file = try fname.open(io);
-                                defer file.close(io);
+                                var file = try fname.open();
+                                defer file.close();
 
                                 var buffer: [1024]u8 = undefined;
-                                var adapter = file.reader(io, &buffer);
+                                var adapter = file.reader(&buffer);
 
                                 try exec.add_file(path, &adapter.interface);
                             },
@@ -107,7 +108,7 @@ fn Executor(comptime T: type) type {
                             else => {
                                 var realpath_buffer: [std.fs.max_path_bytes]u8 = undefined;
                                 std.log.warn("cannot copy file {s}: {s} is not a supported file type!", .{
-                                    if (entry.dir.realPathFile(io, entry.path, &realpath_buffer)) |l| realpath_buffer[0..l] else |e| @errorName(e),
+                                    if (entry.dir.realPathFile(data.source.env.stdio, entry.path, &realpath_buffer)) |l| realpath_buffer[0..l] else |_| entry.path,
                                     @tagName(entry.kind),
                                 });
                             },
@@ -119,9 +120,9 @@ fn Executor(comptime T: type) type {
                     const buffer = try std.heap.page_allocator.alloc(u8, data.size);
                     defer std.heap.page_allocator.free(buffer);
 
-                    var bs: dim.BinaryStream = .init_buffer(buffer);
+                    var bs: dim.BinaryStream = .init_buffer(data.ctx.env.stdio, buffer);
 
-                    try data.contents.render(io, &bs);
+                    try data.contents.render(&bs);
 
                     var reader: std.Io.Reader = .fixed(buffer);
 
@@ -183,8 +184,8 @@ fn Executor(comptime T: type) type {
     };
 }
 
-fn parse_path(ctx: dim.Context, stdio: std.Io) ![:0]const u8 {
-    const path = try ctx.parse_string(stdio);
+fn parse_path(ctx: dim.Context) ![:0]const u8 {
+    const path = try ctx.parse_string();
 
     if (path.len == 0) {
         try ctx.report_nonfatal_error("Path cannot be empty!", .{});
@@ -216,41 +217,41 @@ fn parse_path(ctx: dim.Context, stdio: std.Io) ![:0]const u8 {
     return try normalize(ctx.get_arena(), path);
 }
 
-pub fn parse_ops(ctx: dim.Context, stdio: std.Io, end_seq: []const u8, handler: anytype) !void {
+pub fn parse_ops(ctx: dim.Context, end_seq: []const u8, handler: anytype) !void {
     while (true) {
-        const opsel = try ctx.parse_string(stdio);
+        const opsel = try ctx.parse_string();
         if (std.mem.eql(u8, opsel, end_seq))
             return;
 
         if (std.mem.eql(u8, opsel, "mkdir")) {
-            const path = try parse_path(ctx, stdio);
+            const path = try parse_path(ctx);
             try handler.append_common_op(FsOperation{
                 .make_dir = .{ .path = path },
             });
         } else if (std.mem.eql(u8, opsel, "copy-dir")) {
-            const path = try parse_path(ctx, stdio);
-            const src = try ctx.parse_file_name(stdio);
+            const path = try parse_path(ctx);
+            const src = try ctx.parse_file_name();
 
             try handler.append_common_op(FsOperation{
                 .copy_dir = .{ .path = path, .source = src },
             });
         } else if (std.mem.eql(u8, opsel, "copy-file")) {
-            const path = try parse_path(ctx, stdio);
-            const src = try ctx.parse_file_name(stdio);
+            const path = try parse_path(ctx);
+            const src = try ctx.parse_file_name();
 
             try handler.append_common_op(FsOperation{
                 .copy_file = .{ .path = path, .source = src },
             });
         } else if (std.mem.eql(u8, opsel, "create-file")) {
-            const path = try parse_path(ctx, stdio);
-            const size = try ctx.parse_mem_size(stdio);
-            const contents = try ctx.parse_content(stdio);
+            const path = try parse_path(ctx);
+            const size = try ctx.parse_mem_size();
+            const contents = try ctx.parse_content();
 
             try handler.append_common_op(FsOperation{
-                .create_file = .{ .path = path, .size = size, .contents = contents },
+                .create_file = .{ .path = path, .size = size, .contents = contents, .ctx = ctx },
             });
         } else {
-            try handler.parse_custom_op(stdio, ctx, opsel);
+            try handler.parse_custom_op(ctx, opsel);
         }
     }
 }
