@@ -4,7 +4,7 @@ pub const BuildInterface = @import("src/BuildInterface.zig");
 
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
-    b.release_mode = .fast;
+    b.graph.release_mode = .fast;
     const optimize = b.standardOptimizeOption(.{});
 
     const test_step = b.step("test", "Runs the test suite.");
@@ -53,7 +53,7 @@ pub fn build(b: *std.Build) void {
 
     const behaviour_tests_step = b.step("behaviour", "Run all behaviour tests");
     for (behaviour_tests) |script| {
-        const step_name = b.dupe(script);
+        const step_name = b.graph.arena.dupe(u8, script) catch @panic("oom");
         std.mem.replaceScalar(u8, step_name, '/', '-');
         const script_test = b.step(step_name, b.fmt("Run {s} behaviour test", .{script}));
 
