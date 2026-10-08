@@ -9,7 +9,7 @@ const Parser = @import("Parser.zig");
 const args = @import("args");
 
 pub const std_options: std.Options = .{
-    .log_level = if (builtin.mode == .Debug)
+    .log_level = if (builtin.mode == .debug)
         .debug
     else
         .info,
@@ -340,7 +340,7 @@ pub fn FieldUpdater(comptime Obj: type, comptime optional_fields: []const std.me
         ctx: Context,
         target: *Obj,
 
-        updated_fields: std.EnumSet(FieldName) = .initEmpty(),
+        updated_fields: std.EnumSet(FieldName) = .empty,
 
         pub fn init(ctx: Context, target: *Obj) FUP {
             return .{

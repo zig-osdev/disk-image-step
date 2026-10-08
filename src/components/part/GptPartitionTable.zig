@@ -200,7 +200,8 @@ pub fn render(table: *PartTable, stream: *dim.BinaryStream) dim.Content.RenderEr
             return error.ConfigurationError;
         }
 
-        pe_block[0x00..0x10].* = @bitCast(partition.type);
+        // pe_block[0x00..0x10].* = @bitCast(partition.type);
+        @memcpy(pe_block[0x00..0x10], std.mem.asBytes(&partition.type));
         (partition.part_id orelse Guid.rand(random)).write(pe_block[0x10..0x20]);
         std.mem.writeInt(u64, pe_block[0x20..0x28], start_lba, .little);
         std.mem.writeInt(u64, pe_block[0x28..0x30], end_lba, .little);
