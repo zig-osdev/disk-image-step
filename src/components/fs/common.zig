@@ -77,10 +77,10 @@ fn Executor(comptime T: type) type {
                     defer walker.deinit();
 
                     while (walker.next(data.source.env.stdio) catch |err| return walk_err(err)) |entry| {
-                        const path = std.fmt.bufPrintZ(&path_memory, "{s}/{s}", .{
+                        const path = std.fmt.bufPrintSentinel(&path_memory, "{s}/{s}", .{
                             data.path,
                             entry.path,
-                        }) catch @panic("buffer too small!");
+                        }, 0) catch @panic("buffer too small!");
 
                         // std.log.debug("- {s}", .{path_buffer.items});
 

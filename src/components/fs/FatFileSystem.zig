@@ -21,8 +21,6 @@ cluster_size: ?u32 = null,
 pub fn parse(ctx: dim.Context) !dim.Content {
     const fat_type = try ctx.parse_enum(FatType);
 
-    fatfs.io = ctx.env.stdio;
-
     const pf = try ctx.alloc_object(FAT);
     pf.* = .{
         .format_as = fat_type,
@@ -119,28 +117,28 @@ fn render(self: *FAT, stream: *dim.BinaryStream) dim.Content.RenderError!void {
         .rootdir_size = self.rootdir_size orelse 512, // randomly chosen, might need adjustment
         .use_partitions = false, // we have other means for this
     }, &workspace) catch |err| switch (err) {
-        error.OutOfMemory => return error.OutOfMemory,
-        error.WriteProtected => @panic("bug in zfat"),
-        error.InvalidParameter => @panic("bug in zfat disk wrapper"),
-        error.DiskErr => return error.IoError,
-        error.NotReady => @panic("bug in zfat disk wrapper"),
-        error.InvalidDrive => @panic("bug in AtomicOps"),
-        error.MkfsAborted => return error.IoError,
+        error.FR_NOT_ENOUGH_CORE => return error.OutOfMemory,
+        error.FR_WRITE_PROTECTED => @panic("bug in zfat"),
+        error.FR_INVALID_PARAMETER => @panic("bug in zfat disk wrapper"),
+        error.FR_DISK_ERR => return error.IoError,
+        error.FR_NOT_READY => @panic("bug in zfat disk wrapper"),
+        error.FR_INVALID_DRIVE => @panic("bug in AtomicOps"),
+        error.FR_MKFS_ABORTED => return error.IoError,
     };
 
     var filesystem: fatfs.FileSystem = undefined;
     filesystem.mount("0:", true) catch |err| switch (err) {
-        error.NotEnabled => @panic("bug in zfat"),
-        error.DiskErr => return error.IoError,
-        error.NotReady => @panic("bug in zfat disk wrapper"),
-        error.InvalidDrive => @panic("bug in AtomicOps"),
-        error.NoFilesystem => @panic("bug in zfat"),
+        error.FR_NOT_ENABLED => @panic("bug in zfat"),
+        error.FR_DISK_ERR => return error.IoError,
+        error.FR_NOT_READY => @panic("bug in zfat disk wrapper"),
+        error.FR_INVALID_DRIVE => @panic("bug in AtomicOps"),
+        error.FR_NO_FILESYSTEM => @panic("bug in zfat"),
     };
 
     if (self.label) |label| {
         if (label.len <= max_label_len) {
             var label_buffer: [max_label_len + 3:0]u8 = undefined;
-            const buf = std.fmt.bufPrintZ(&label_buffer, "0:{s}", .{label}) catch @panic("buffer too small");
+            const buf = std.fmt.bufPrintSentinel(&label_buffer, "0:{s}", .{label}, 0) catch @panic("buffer too small");
 
             if (fatfs.api.setlabel(buf.ptr) != 0) {
                 return error.IoError;
@@ -194,19 +192,19 @@ const AtomicOps = struct {
 
         const joined = try std.mem.concatWithSentinel(fba.allocator(), u8, &.{ "0:/", path }, 0);
         fatfs.mkdir(joined) catch |err| switch (err) {
-            error.Exist => {}, // this is good
-            error.OutOfMemory => return error.OutOfMemory,
-            error.Timeout => @panic("implementation bug in fatfs glue"),
-            error.InvalidName => return error.ConfigurationError,
-            error.WriteProtected => @panic("implementation bug in fatfs glue"),
-            error.DiskErr => return error.IoError,
-            error.NotReady => @panic("implementation bug in fatfs glue"),
-            error.InvalidDrive => @panic("implementation bug in fatfs glue"),
-            error.NotEnabled => @panic("implementation bug in fatfs glue"),
-            error.NoFilesystem => @panic("implementation bug in fatfs glue"),
-            error.IntErr => @panic("Assertion failed and an insanity is detected in the internal process."),
-            error.NoPath => @panic("implementation bug in fatfs glue"),
-            error.Denied => @panic("implementation bug in fatfs glue"),
+            error.FR_EXIST => {}, // this is good
+            error.FR_NOT_ENOUGH_CORE => return error.OutOfMemory,
+            error.FR_TIMEOUT => @panic("implementation bug in fatfs glue"),
+            error.FR_INVALID_NAME => return error.ConfigurationError,
+            error.FR_WRITE_PROTECTED => @panic("implementation bug in fatfs glue"),
+            error.FR_DISK_ERR => return error.IoError,
+            error.FR_NOT_READY => @panic("implementation bug in fatfs glue"),
+            error.FR_INVALID_DRIVE => @panic("implementation bug in fatfs glue"),
+            error.FR_NOT_ENABLED => @panic("implementation bug in fatfs glue"),
+            error.FR_NO_FILESYSTEM => @panic("implementation bug in fatfs glue"),
+            error.FR_INT_ERR => @panic("Assertion failed and an insanity is detected in the internal process."),
+            error.FR_NO_PATH => @panic("implementation bug in fatfs glue"),
+            error.FR_DENIED => @panic("implementation bug in fatfs glue"),
         };
     }
 
@@ -222,23 +220,23 @@ const AtomicOps = struct {
         const path_z = path_buffer[0..path.len :0];
 
         var fs_file = fatfs.File.create(path_z) catch |err| switch (err) {
-            error.OutOfMemory => return error.OutOfMemory,
-            error.Timeout => @panic("implementation bug in fatfs glue"),
-            error.InvalidName => return error.ConfigurationError,
-            error.WriteProtected => @panic("implementation bug in fatfs glue"),
-            error.DiskErr => return error.IoError,
-            error.NotReady => @panic("implementation bug in fatfs glue"),
-            error.InvalidDrive => @panic("implementation bug in fatfs glue"),
-            error.NotEnabled => @panic("implementation bug in fatfs glue"),
-            error.NoFilesystem => @panic("implementation bug in fatfs glue"),
-            error.IntErr => return error.IoError,
-            error.NoFile => @panic("implementation bug in fatfs glue"),
-            error.NoPath => @panic("implementation bug in fatfs glue"),
-            error.Denied => @panic("implementation bug in fatfs glue"),
-            error.Exist => @panic("implementation bug in fatfs glue"),
-            error.InvalidObject => @panic("implementation bug in fatfs glue"),
-            error.Locked => @panic("implementation bug in fatfs glue"),
-            error.TooManyOpenFiles => @panic("implementation bug in fatfs glue"),
+            error.FR_NOT_ENOUGH_CORE => return error.OutOfMemory,
+            error.FR_TIMEOUT => @panic("implementation bug in fatfs glue"),
+            error.FR_INVALID_NAME => return error.ConfigurationError,
+            error.FR_WRITE_PROTECTED => @panic("implementation bug in fatfs glue"),
+            error.FR_DISK_ERR => return error.IoError,
+            error.FR_NOT_READY => @panic("implementation bug in fatfs glue"),
+            error.FR_INVALID_DRIVE => @panic("implementation bug in fatfs glue"),
+            error.FR_NOT_ENABLED => @panic("implementation bug in fatfs glue"),
+            error.FR_NO_FILESYSTEM => @panic("implementation bug in fatfs glue"),
+            error.FR_INT_ERR => return error.IoError,
+            error.FR_NO_FILE => @panic("implementation bug in fatfs glue"),
+            error.FR_NO_PATH => @panic("implementation bug in fatfs glue"),
+            error.FR_DENIED => @panic("implementation bug in fatfs glue"),
+            error.FR_EXIST => @panic("implementation bug in fatfs glue"),
+            error.FR_INVALID_OBJECT => @panic("implementation bug in fatfs glue"),
+            error.FR_LOCKED => @panic("implementation bug in fatfs glue"),
+            error.FR_TOO_MANY_OPEN_FILES => @panic("implementation bug in fatfs glue"),
         };
         defer fs_file.close();
 
