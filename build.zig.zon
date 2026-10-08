@@ -8,8 +8,8 @@
             .hash = "zfat-0.0.1-SNNK9XdqcgD2xmhOxReIQobM1lff3FDkAtvEOPoCG0tt",
         },
         .args = .{
-            .url = "git+https://github.com/ikskuh/zig-args?ref=master#d47ae21768f9ec47c2a4154ab48b87166965b820",
-            .hash = "args-0.0.0-CiLiqmvgAADyJmrzcQTP9IOYNvTzR_KGrg3ZNNsH2Qv0",
+            .url = "git+https://github.com/ikskuh/zig-args#ad3c89ecdb2979b8b5d52b43b78e79bf51293235",
+            .hash = "args-0.0.0-CiLiqmHiAABlN6icC9sZHdp8HVplOXDxuUNz2VUY_K2X",
         },
     },
     .paths = .{
