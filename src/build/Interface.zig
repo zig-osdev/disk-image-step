@@ -1,7 +1,7 @@
 //!
 //! This file implements the Zig build system interface for Dimmer.
 //!
-//! It is included by it's build.zig
+//! It is included by its build.zig
 //!
 const std = @import("std");
 
@@ -38,10 +38,13 @@ pub fn createDisk(dimmer: Interface, size: u64, content: Content) std.Build.Lazy
 
     compile_script.addArg(b.fmt("--size={d}", .{size}));
 
-    compile_script.addPrefixedFileArg("--script=", script_file);
+    compile_script.addFileArg2(script_file, .{ .prefix = "--script=" });
     // compile_script.addPrefixedDirectoryArg("--script-root=", .{ .cwd_relative = "." });
 
-    const result_file = compile_script.addPrefixedOutputFileArg("--output=", "disk.img");
+    const result_file = compile_script.addOutputFileArg2(
+        "disk.img",
+        .{ .prefix = "--output=" },
+    );
 
     {
         var iter = variables.iterator();
@@ -50,13 +53,13 @@ pub fn createDisk(dimmer: Interface, size: u64, content: Content) std.Build.Lazy
             const path, const usage = kvp.value_ptr.*;
 
             switch (usage) {
-                .file => compile_script.addPrefixedFileArg(
-                    b.fmt("{s}=", .{key}),
+                .file => compile_script.addFileArg2(
                     path,
+                    .{ .prefix = b.fmt("{s}=", .{key}) },
                 ),
-                .directory => compile_script.addPrefixedDirectoryArg(
-                    b.fmt("{s}=", .{key}),
+                .directory => compile_script.addDirectoryArg2(
                     path,
+                    .{ .prefix = b.fmt("{s}=", .{key}) },
                 ),
             }
         }
@@ -311,37 +314,39 @@ const ContentWriter = struct {
     ) std.Io.Writer.Error!void {
         const cw, const path, const hint, const io, const gpa = data;
 
+        _ = io;
+
         switch (path) {
-            .cwd_relative,
-            .dependency,
-            .src_path,
-            => {
+            // .cwd_relative,
+            // .dependency,
+            // .src_path,
+            // => {
 
-                // We can safely call getPath2 as we can fully resolve the path
-                // already
-                const rel_path = path.getPath2(cw.wfs.step.owner, &cw.wfs.step);
+            //     // We can safely call getPath2 as we can fully resolve the path
+            //     // already
+            //     const rel_path = path.getPath2(cw.wfs.step.owner, &cw.wfs.step);
 
-                const full_path = if (!std.fs.path.isAbsolute(rel_path))
-                    std.Io.Dir.cwd().realPathFileAlloc(io, rel_path, cw.wfs.step.owner.allocator) catch @panic("oom")
-                else
-                    rel_path;
+            //     const full_path = if (!std.fs.path.isAbsolute(rel_path))
+            //         std.Io.Dir.cwd().realPathFileAlloc(io, rel_path, cw.wfs.step.owner.allocator) catch @panic("oom")
+            //     else
+            //         rel_path;
 
-                if (!std.fs.path.isAbsolute(full_path)) {
-                    const cwd = std.Io.Dir.cwd().realPathFileAlloc(io, ".", cw.wfs.step.owner.allocator) catch @panic("oom");
-                    std.debug.print("non-absolute path detected for {t}: cwd=\"{f}\" path=\"{f}\"\n", .{
-                        path,
-                        std.zig.fmtString(cwd),
-                        std.zig.fmtString(full_path),
-                    });
-                    @panic("non-absolute path detected!");
-                }
+            //     if (!std.fs.path.isAbsolute(full_path)) {
+            //         const cwd = std.Io.Dir.cwd().realPathFileAlloc(io, ".", cw.wfs.step.owner.allocator) catch @panic("oom");
+            //         std.debug.print("non-absolute path detected for {t}: cwd=\"{f}\" path=\"{f}\"\n", .{
+            //             path,
+            //             std.zig.fmtString(cwd),
+            //             std.zig.fmtString(full_path),
+            //         });
+            //         @panic("non-absolute path detected!");
+            //     }
 
-                try writer.print("{f}", .{
-                    fmtPath(full_path),
-                });
-            },
+            //     try writer.print("{f}", .{
+            //         fmtPath(full_path),
+            //     });
+            // },
 
-            .generated => {
+            else => {
                 // this means we can't emit the variable just verbatim, but we
                 // actually have a build-time dependency
                 const var_id = cw.vars.count() + 1;
@@ -351,6 +356,9 @@ const ContentWriter = struct {
 
                 try writer.print("${s}", .{var_name});
             },
+            // .relative => {
+            //     @panic("TODO");
+            // }
         }
     }
 };
@@ -465,15 +473,15 @@ pub const FileSystemBuilder = struct {
 
     pub fn includeScript(fsb: *FileSystemBuilder, source: std.Build.LazyPath) void {
         fsb.list.append(fsb.b.allocator, .{
-            .include_script = source.dupe(fsb.b),
+            .include_script = source.dupe(fsb.b.graph),
         }) catch @panic("out of memory");
     }
 
     pub fn copyFile(fsb: *FileSystemBuilder, source: std.Build.LazyPath, destination: []const u8) void {
         fsb.list.append(fsb.b.allocator, .{
             .copy_file = .{
-                .source = source.dupe(fsb.b),
-                .destination = fsb.b.dupe(destination),
+                .source = source.dupe(fsb.b.graph),
+                .destination = fsb.b.graph.dupePath(destination),
             },
         }) catch @panic("out of memory");
     }
@@ -481,8 +489,8 @@ pub const FileSystemBuilder = struct {
     pub fn copyDirectory(fsb: *FileSystemBuilder, source: std.Build.LazyPath, destination: []const u8) void {
         fsb.list.append(fsb.b.allocator, .{
             .copy_dir = .{
-                .source = source.dupe(fsb.b),
-                .destination = fsb.b.dupe(destination),
+                .source = source.dupe(fsb.b.graph),
+                .destination = fsb.b.graph.dupePath(destination),
             },
         }) catch @panic("out of memory");
     }

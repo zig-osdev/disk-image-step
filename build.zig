@@ -1,6 +1,6 @@
 const std = @import("std");
 
-pub const BuildInterface = @import("src/BuildInterface.zig");
+pub const BuildInterface = @import("src/build/Interface.zig");
 
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
